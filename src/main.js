@@ -15,13 +15,28 @@ let backgroundAudioElement = null;
 let youtubePlayers = {}; // Store YouTube players by clip key
 let activeClips = {}; // Track which clips are currently playing
 let clipTimeouts = {}; // Store timeouts for clip duration limits
+let clipProgressIntervals = {}; // Store progress update intervals
 let isYouTubeAPIReady = false;
+let audioContext = null;
+let audioAnalyser = null;
+let audioDataArray = null;
+
+// LocalStorage keys
+const STORAGE_KEYS = {
+  clips: 'meme-machine-clips',
+  backgroundTrack: 'meme-machine-background-track',
+  backgroundAudioData: 'meme-machine-background-audio-data',
+  backgroundAudioName: 'meme-machine-background-audio-name',
+  settings: 'meme-machine-settings'
+};
 
 // Initialize the app
 function init() {
   loadYouTubeAPI();
+  loadFromStorage(); // Load saved data first
   renderCurrentMode();
   setupEventListeners();
+  console.log('Meme Machine loaded with saved settings');
 }
 
 // Load YouTube iFrame API
@@ -135,10 +150,13 @@ function renderEditMode() {
 
 // Render Play Mode
 function renderPlayMode() {
-  const mappedKeysHTML = clips
-    .filter(clip => clip.key && clip.url)
-    .map(clip => `<div class="mapped-key">${clip.key}</div>`)
+  const mappedClips = clips.filter(clip => clip.key && clip.url);
+  
+  const mappedKeysHTML = mappedClips
+    .map(clip => `<div class="mapped-key" data-key="${clip.key}">${clip.key}</div>`)
     .join('');
+
+  const virtualKeyboardHTML = generateVirtualKeyboard(mappedClips);
 
   return `
     <div class="play-mode">
@@ -148,12 +166,20 @@ function renderPlayMode() {
         <div class="canvas-content">
           <div class="video-placeholder">Press a key to play video</div>
           <div class="youtube-players"></div>
+          <div class="canvas-border"></div>
+          <div class="audio-visualizer">
+            <canvas id="visualizer-canvas" width="200" height="200"></canvas>
+          </div>
         </div>
+      </div>
+      
+      <div class="virtual-keyboard">
+        ${virtualKeyboardHTML}
       </div>
       
       <div class="controls-section">
         <div class="mapped-keys-section">
-          <span class="mapped-keys-label">Mapped keys</span>
+          <span class="mapped-keys-label">Active Keys</span>
           <div class="mapped-keys">
             ${mappedKeysHTML || '<div class="no-keys">No keys mapped</div>'}
           </div>
@@ -166,6 +192,10 @@ function renderPlayMode() {
         
         <div class="playback-status">
           <div class="background-status">Background: <span id="bg-status">stopped</span></div>
+          <div class="performance-stats">
+            <div>Keys pressed: <span id="keys-pressed">0</span></div>
+            <div>Session time: <span id="session-time">00:00</span></div>
+          </div>
         </div>
       </div>
       
@@ -174,10 +204,55 @@ function renderPlayMode() {
   `;
 }
 
+// Generate virtual keyboard
+function generateVirtualKeyboard(mappedClips) {
+  const keyboardRows = [
+    ['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'],
+    ['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L'],
+    ['Z', 'X', 'C', 'V', 'B', 'N', 'M']
+  ];
+  
+  const mappedKeys = new Set(mappedClips.map(clip => clip.key));
+  
+  return keyboardRows.map(row => 
+    `<div class="keyboard-row">
+      ${row.map(key => {
+        const isMapped = mappedKeys.has(key);
+        const clip = mappedClips.find(c => c.key === key);
+        return `
+          <div class="virtual-key ${isMapped ? 'mapped' : ''}" data-key="${key}">
+            <span class="key-letter">${key}</span>
+            ${isMapped ? `
+              <div class="key-info">
+                <div class="clip-name">${getClipName(clip.url)}</div>
+                <div class="progress-ring">
+                  <div class="progress-fill"></div>
+                </div>
+              </div>
+            ` : ''}
+          </div>
+        `;
+      }).join('')}
+    </div>`
+  ).join('');
+}
+
+// Get short clip name from URL
+function getClipName(url) {
+  try {
+    const videoId = extractYouTubeVideoId(url);
+    return videoId ? `${videoId.substring(0, 6)}...` : 'Clip';
+  } catch {
+    return 'Clip';
+  }
+}
+
 // Setup Play Mode
 function setupPlayMode() {
   setupBackgroundAudio();
   setupYouTubePlayers();
+  setupAudioVisualization();
+  startSessionTimer();
 }
 
 // Setup background audio
@@ -285,21 +360,36 @@ function playClip(key) {
   // Show and play the video
   const playerDiv = document.getElementById(`player-${key}`);
   if (playerDiv) {
-    // Hide placeholder
+    // Hide placeholder with fade effect
     const placeholder = document.querySelector('.video-placeholder');
-    if (placeholder) placeholder.style.display = 'none';
+    if (placeholder) {
+      placeholder.style.opacity = '0';
+      setTimeout(() => placeholder.style.display = 'none', 300);
+    }
     
-    // Show and play this video
+    // Show and play this video with fade in
     playerDiv.style.display = 'block';
+    playerDiv.style.opacity = '0';
+    setTimeout(() => playerDiv.style.opacity = '1', 50);
+    
     player.seekTo(startTime);
     player.playVideo();
     
     activeClips[key] = true;
     
+    // Update virtual keyboard
+    updateVirtualKey(key, true);
+    
+    // Start progress indicator
+    startProgressIndicator(key, duration);
+    
     // Set timeout for duration limit
     clipTimeouts[key] = setTimeout(() => {
       stopClip(key);
     }, duration * 1000);
+    
+    // Update stats
+    updateKeysPressed();
     
     console.log(`Playing clip ${key} from ${startTime}s for ${duration}s`);
   }
@@ -313,24 +403,38 @@ function stopClip(key) {
   // Stop the video
   player.pauseVideo();
   
-  // Hide the video
+  // Hide the video with fade
   const playerDiv = document.getElementById(`player-${key}`);
   if (playerDiv) {
-    playerDiv.style.display = 'none';
+    playerDiv.style.opacity = '0';
+    setTimeout(() => playerDiv.style.display = 'none', 300);
   }
   
   // Show placeholder if no other videos are playing
-  const hasActiveClips = Object.values(activeClips).some(active => active);
-  if (!hasActiveClips) {
-    const placeholder = document.querySelector('.video-placeholder');
-    if (placeholder) placeholder.style.display = 'block';
-  }
+  setTimeout(() => {
+    const hasActiveClips = Object.values(activeClips).some(active => active);
+    if (!hasActiveClips) {
+      const placeholder = document.querySelector('.video-placeholder');
+      if (placeholder) {
+        placeholder.style.display = 'block';
+        placeholder.style.opacity = '1';
+      }
+    }
+  }, 300);
   
-  // Clear timeout
+  // Clear timeout and progress
   if (clipTimeouts[key]) {
     clearTimeout(clipTimeouts[key]);
     delete clipTimeouts[key];
   }
+  
+  if (clipProgressIntervals[key]) {
+    clearInterval(clipProgressIntervals[key]);
+    delete clipProgressIntervals[key];
+  }
+  
+  // Update virtual keyboard
+  updateVirtualKey(key, false);
   
   activeClips[key] = false;
   
@@ -392,6 +496,9 @@ function handleKeyMapping(e) {
     isListeningForKey = false;
     listeningClipIndex = -1;
     
+    // Save the new key mapping
+    saveToStorage();
+    
     // Re-render to update UI
     renderCurrentMode();
   }
@@ -423,6 +530,7 @@ function setupEditModeListeners() {
       validateUniqueKeys(); // Ensure no duplicates before playing
       if (clips.some(c => c.url && c.key)) {
         currentMode = 'play';
+        saveToStorage(); // Save current state before switching modes
         renderCurrentMode();
       }
     });
@@ -443,6 +551,7 @@ function setupEditModeListeners() {
       }
       
       clips.push({ key: nextKey, url: '', timestamp: '', duration: '' });
+      saveToStorage(); // Auto-save when adding clips
       renderCurrentMode();
     });
   }
@@ -454,10 +563,12 @@ function setupEditModeListeners() {
       if (clipIndex >= 0 && clips.length > 1) { // Keep at least one clip
         clips.splice(clipIndex, 1);
         validateUniqueKeys(); // Clean up after removal
+        saveToStorage(); // Auto-save when removing clips
         renderCurrentMode();
       } else if (clips.length === 1) {
         // Reset the single clip instead of removing it
         clips[0] = { key: 'A', url: '', timestamp: '', duration: '' };
+        saveToStorage(); // Auto-save when resetting clip
         renderCurrentMode();
       }
     });
@@ -468,6 +579,7 @@ function setupEditModeListeners() {
     backgroundTrackInput.addEventListener('input', (e) => {
       if (!backgroundAudioFile) { // Only allow manual input if no file is uploaded
         backgroundTrack = e.target.value;
+        saveToStorage(); // Auto-save background track changes
       }
     });
   }
@@ -527,6 +639,12 @@ function setupEditModeListeners() {
         
         // Update play button state
         updatePlayButtonState();
+        
+        // Auto-save on input changes (with debouncing)
+        clearTimeout(window.saveTimeout);
+        window.saveTimeout = setTimeout(() => {
+          saveToStorage();
+        }, 1000); // Save after 1 second of no typing
       }
     });
   });
@@ -540,7 +658,7 @@ function handleAudioFileUpload(file) {
     return;
   }
   
-  // Check file size (limit to 50MB)
+  // Check file size (limit to 50MB for usage, 5MB for storage)
   const maxSize = 50 * 1024 * 1024; // 50MB in bytes
   if (file.size > maxSize) {
     alert('File size is too large. Please select a file smaller than 50MB.');
@@ -557,7 +675,15 @@ function handleAudioFileUpload(file) {
   }
   backgroundAudioFile.audioUrl = URL.createObjectURL(file);
   
+  // Show storage warning for large files
+  if (file.size > 5 * 1024 * 1024) {
+    console.warn('File larger than 5MB - will not be saved to localStorage');
+  }
+  
   console.log('Background audio loaded:', file.name, 'Size:', (file.size / 1024 / 1024).toFixed(2) + 'MB');
+  
+  // Save to storage
+  saveToStorage();
   
   // Re-render to show the clear button and updated filename
   renderCurrentMode();
@@ -579,6 +705,9 @@ function clearBackgroundAudio() {
   }
   
   console.log('Background audio cleared');
+  
+  // Save to storage
+  saveToStorage();
   
   // Re-render to hide the clear button
   renderCurrentMode();
@@ -620,6 +749,7 @@ function setupPlayModeListeners() {
       }
       
       currentMode = 'edit';
+      saveToStorage(); // Save current state before switching modes
       renderCurrentMode();
     });
   }
@@ -677,6 +807,329 @@ function validateUniqueKeys() {
   
   return duplicates.length === 0;
 }
+
+// Setup audio visualization
+function setupAudioVisualization() {
+  try {
+    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    audioAnalyser = audioContext.createAnalyser();
+    audioAnalyser.fftSize = 256;
+    audioDataArray = new Uint8Array(audioAnalyser.frequencyBinCount);
+    
+    if (backgroundAudioElement) {
+      const source = audioContext.createMediaElementSource(backgroundAudioElement);
+      source.connect(audioAnalyser);
+      audioAnalyser.connect(audioContext.destination);
+    }
+    
+    startVisualization();
+  } catch (error) {
+    console.log('Audio visualization not available:', error);
+  }
+}
+
+// Start audio visualization
+function startVisualization() {
+  const canvas = document.getElementById('visualizer-canvas');
+  if (!canvas || !audioAnalyser) return;
+  
+  const ctx = canvas.getContext('2d');
+  const centerX = canvas.width / 2;
+  const centerY = canvas.height / 2;
+  const radius = 60;
+  
+  function animate() {
+    if (!audioAnalyser) return;
+    
+    audioAnalyser.getByteFrequencyData(audioDataArray);
+    
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    // Draw circular visualizer
+    const barCount = 32;
+    const angleStep = (Math.PI * 2) / barCount;
+    
+    for (let i = 0; i < barCount; i++) {
+      const value = audioDataArray[i] || 0;
+      const height = (value / 255) * 40;
+      const angle = i * angleStep;
+      
+      const x1 = centerX + Math.cos(angle) * radius;
+      const y1 = centerY + Math.sin(angle) * radius;
+      const x2 = centerX + Math.cos(angle) * (radius + height);
+      const y2 = centerY + Math.sin(angle) * (radius + height);
+      
+      ctx.strokeStyle = `hsl(${(i * 10) % 360}, 70%, 60%)`;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+    }
+    
+    // Update canvas border based on audio
+    const avgVolume = audioDataArray.reduce((a, b) => a + b, 0) / audioDataArray.length;
+    updateCanvasBorder(avgVolume);
+    
+    requestAnimationFrame(animate);
+  }
+  
+  animate();
+}
+
+// Update canvas border based on audio
+function updateCanvasBorder(volume) {
+  const border = document.querySelector('.canvas-border');
+  if (border) {
+    const intensity = Math.min(volume / 128, 1);
+    const hue = (intensity * 120) + 240; // Blue to purple range
+    border.style.boxShadow = `inset 0 0 ${20 + intensity * 30}px rgba(${Math.floor(intensity * 255)}, 100, 255, 0.6)`;
+    border.style.borderColor = `hsl(${hue}, 70%, 60%)`;
+  }
+}
+
+// Start session timer
+function startSessionTimer() {
+  const startTime = Date.now();
+  
+  setInterval(() => {
+    const elapsed = Math.floor((Date.now() - startTime) / 1000);
+    const minutes = Math.floor(elapsed / 60);
+    const seconds = elapsed % 60;
+    const timeElement = document.getElementById('session-time');
+    if (timeElement) {
+      timeElement.textContent = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+    }
+  }, 1000);
+}
+
+// Update virtual key visual state
+function updateVirtualKey(key, isActive) {
+  const virtualKey = document.querySelector(`.virtual-key[data-key="${key}"]`);
+  if (virtualKey) {
+    if (isActive) {
+      virtualKey.classList.add('active');
+    } else {
+      virtualKey.classList.remove('active');
+      // Reset progress ring
+      const progressFill = virtualKey.querySelector('.progress-fill');
+      if (progressFill) {
+        progressFill.style.transform = 'rotate(0deg)';
+      }
+    }
+  }
+}
+
+// Start progress indicator for a clip
+function startProgressIndicator(key, duration) {
+  const virtualKey = document.querySelector(`.virtual-key[data-key="${key}"]`);
+  const progressFill = virtualKey?.querySelector('.progress-fill');
+  
+  if (!progressFill) return;
+  
+  const startTime = Date.now();
+  const durationMs = duration * 1000;
+  
+  clipProgressIntervals[key] = setInterval(() => {
+    const elapsed = Date.now() - startTime;
+    const progress = Math.min(elapsed / durationMs, 1);
+    const degrees = progress * 360;
+    
+    progressFill.style.transform = `rotate(${degrees}deg)`;
+    
+    if (progress >= 1) {
+      clearInterval(clipProgressIntervals[key]);
+      delete clipProgressIntervals[key];
+    }
+  }, 50);
+}
+
+// Update keys pressed counter
+function updateKeysPressed() {
+  const counter = document.getElementById('keys-pressed');
+  if (counter) {
+    const current = parseInt(counter.textContent) || 0;
+    counter.textContent = (current + 1).toString();
+  }
+}
+
+// Save data to localStorage
+function saveToStorage() {
+  try {
+    // Save clips data
+    localStorage.setItem(STORAGE_KEYS.clips, JSON.stringify(clips));
+    
+    // Save background track name/URL
+    localStorage.setItem(STORAGE_KEYS.backgroundTrack, backgroundTrack);
+    
+    // Save background audio filename
+    if (backgroundAudioFile) {
+      localStorage.setItem(STORAGE_KEYS.backgroundAudioName, backgroundAudioFile.name);
+      
+      // For small files, save the actual audio data as base64
+      if (backgroundAudioFile.size <= 5 * 1024 * 1024) { // 5MB limit for localStorage
+        const reader = new FileReader();
+        reader.onload = function(e) {
+          try {
+            localStorage.setItem(STORAGE_KEYS.backgroundAudioData, e.target.result);
+            console.log('Background audio saved to localStorage');
+          } catch (error) {
+            console.warn('Failed to save audio data - file too large:', error);
+            localStorage.removeItem(STORAGE_KEYS.backgroundAudioData);
+          }
+        };
+        reader.readAsDataURL(backgroundAudioFile);
+      } else {
+        // File too large for localStorage
+        localStorage.removeItem(STORAGE_KEYS.backgroundAudioData);
+        console.warn('Background audio file too large for localStorage (>5MB)');
+      }
+    } else {
+      // No audio file, clear stored data
+      localStorage.removeItem(STORAGE_KEYS.backgroundAudioName);
+      localStorage.removeItem(STORAGE_KEYS.backgroundAudioData);
+    }
+    
+    // Save general settings
+    const settings = {
+      currentMode: currentMode,
+      lastSaved: Date.now()
+    };
+    localStorage.setItem(STORAGE_KEYS.settings, JSON.stringify(settings));
+    
+    console.log('Settings saved to localStorage');
+  } catch (error) {
+    console.error('Failed to save to localStorage:', error);
+  }
+}
+
+// Load data from localStorage
+function loadFromStorage() {
+  try {
+    // Load clips data
+    const savedClips = localStorage.getItem(STORAGE_KEYS.clips);
+    if (savedClips) {
+      const parsedClips = JSON.parse(savedClips);
+      if (Array.isArray(parsedClips) && parsedClips.length > 0) {
+        clips = parsedClips;
+      }
+    }
+    
+    // Load background track
+    const savedBackgroundTrack = localStorage.getItem(STORAGE_KEYS.backgroundTrack);
+    if (savedBackgroundTrack) {
+      backgroundTrack = savedBackgroundTrack;
+    }
+    
+    // Load background audio data
+    const savedAudioName = localStorage.getItem(STORAGE_KEYS.backgroundAudioName);
+    const savedAudioData = localStorage.getItem(STORAGE_KEYS.backgroundAudioData);
+    
+    if (savedAudioName && savedAudioData) {
+      // Recreate the audio file from base64 data
+      fetch(savedAudioData)
+        .then(res => res.blob())
+        .then(blob => {
+          // Create a File object from the blob
+          backgroundAudioFile = new File([blob], savedAudioName, { type: blob.type });
+          backgroundAudioFile.audioUrl = URL.createObjectURL(blob);
+          backgroundTrack = savedAudioName;
+          
+          console.log('Background audio restored from localStorage:', savedAudioName);
+          
+          // Re-render if we're in edit mode to show the restored audio
+          if (currentMode === 'edit') {
+            renderCurrentMode();
+          }
+        })
+        .catch(error => {
+          console.error('Failed to restore background audio:', error);
+          // Clear invalid data
+          localStorage.removeItem(STORAGE_KEYS.backgroundAudioName);
+          localStorage.removeItem(STORAGE_KEYS.backgroundAudioData);
+        });
+    } else if (savedAudioName) {
+      // Name saved but no data - likely file was too large
+      backgroundTrack = savedAudioName + ' (file too large - please re-upload)';
+    }
+    
+    // Load general settings
+    const savedSettings = localStorage.getItem(STORAGE_KEYS.settings);
+    if (savedSettings) {
+      const settings = JSON.parse(savedSettings);
+      // Could restore currentMode here, but better to always start in edit mode
+      console.log('Last saved:', new Date(settings.lastSaved).toLocaleString());
+    }
+    
+    console.log('Settings loaded from localStorage');
+  } catch (error) {
+    console.error('Failed to load from localStorage:', error);
+    // Reset to defaults if loading fails
+    clips = [{ key: 'A', url: '', timestamp: '', duration: '' }];
+    backgroundTrack = '';
+    backgroundAudioFile = null;
+  }
+}
+
+// Clear all stored data
+function clearStorage() {
+  try {
+    Object.values(STORAGE_KEYS).forEach(key => {
+      localStorage.removeItem(key);
+    });
+    console.log('All stored data cleared');
+  } catch (error) {
+    console.error('Failed to clear storage:', error);
+  }
+}
+
+// Get storage usage info
+function getStorageInfo() {
+  try {
+    let totalSize = 0;
+    const info = {};
+    
+    Object.entries(STORAGE_KEYS).forEach(([name, key]) => {
+      const value = localStorage.getItem(key);
+      const size = value ? new Blob([value]).size : 0;
+      info[name] = {
+        size: size,
+        sizeKB: Math.round(size / 1024 * 100) / 100,
+        exists: !!value
+      };
+      totalSize += size;
+    });
+    
+    info.total = {
+      size: totalSize,
+      sizeKB: Math.round(totalSize / 1024 * 100) / 100,
+      sizeMB: Math.round(totalSize / 1024 / 1024 * 100) / 100
+    };
+    
+    return info;
+  } catch (error) {
+    console.error('Failed to get storage info:', error);
+    return null;
+  }
+}
+
+// Add console commands for debugging storage
+window.memeMachineStorage = {
+  save: saveToStorage,
+  load: loadFromStorage,
+  clear: clearStorage,
+  info: getStorageInfo,
+  export: () => {
+    const data = {
+      clips: clips,
+      backgroundTrack: backgroundTrack,
+      backgroundAudioName: backgroundAudioFile?.name || null,
+      timestamp: new Date().toISOString()
+    };
+    console.log('Exported data:', data);
+    return data;
+  }
+};
 
 // Start the app
 init();

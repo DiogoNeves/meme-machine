@@ -278,7 +278,7 @@ input:focus {
 
 /* Play Mode Styles */
 .play-mode {
-  max-width: 1000px;
+  max-width: 1200px;
   margin: 0 auto;
 }
 
@@ -291,6 +291,7 @@ input:focus {
   background-color: black;
   position: relative;
   overflow: hidden;
+  transition: all 0.3s ease;
 }
 
 .canvas-content {
@@ -302,6 +303,17 @@ input:focus {
   justify-content: center;
 }
 
+.canvas-border {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 8px;
+  pointer-events: none;
+  transition: all 0.1s ease;
+}
+
 .video-placeholder {
   font-size: 1.5rem;
   color: #888;
@@ -309,6 +321,7 @@ input:focus {
   position: absolute;
   z-index: 1;
   text-align: center;
+  transition: opacity 0.3s ease;
 }
 
 .youtube-players {
@@ -323,14 +336,145 @@ input:focus {
   left: 0;
   width: 100%;
   height: 100%;
+  transition: opacity 0.3s ease;
 }
 
+.audio-visualizer {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 10;
+  opacity: 0.8;
+}
+
+#visualizer-canvas {
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.3);
+}
+
+/* Virtual Keyboard Styles */
+.virtual-keyboard {
+  margin: 2rem 0;
+  padding: 1.5rem;
+  background: linear-gradient(135deg, #f0f2f5 0%, #e8eaed 100%);
+  border-radius: 12px;
+  border: 2px solid #ddd;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.keyboard-row {
+  display: flex;
+  justify-content: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.keyboard-row:last-child {
+  margin-bottom: 0;
+}
+
+.virtual-key {
+  position: relative;
+  width: 50px;
+  height: 50px;
+  border: 2px solid #ccc;
+  border-radius: 8px;
+  background: linear-gradient(145deg, #ffffff, #f0f0f0);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.9rem;
+  font-weight: bold;
+  color: #666;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  cursor: default;
+}
+
+.virtual-key.mapped {
+  border-color: #3b82f6;
+  background: linear-gradient(145deg, #e0f2fe, #bfdbfe);
+  color: #1e40af;
+  box-shadow: 0 3px 8px rgba(59, 130, 246, 0.3);
+}
+
+.virtual-key.active {
+  transform: scale(1.1);
+  border-color: #10b981;
+  background: linear-gradient(145deg, #a7f3d0, #6ee7b7);
+  color: #047857;
+  box-shadow: 0 0 20px rgba(16, 185, 129, 0.6);
+  animation: keyPress 0.3s ease;
+}
+
+@keyframes keyPress {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.15); }
+  100% { transform: scale(1.1); }
+}
+
+.key-letter {
+  font-size: 1.1rem;
+  font-weight: bold;
+  margin-bottom: 2px;
+}
+
+.key-info {
+  position: absolute;
+  bottom: -2px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.6rem;
+  text-align: center;
+  width: 100%;
+}
+
+.clip-name {
+  color: #666;
+  margin-bottom: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 40px;
+}
+
+.progress-ring {
+  position: absolute;
+  top: -25px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 20px;
+  height: 20px;
+  border: 2px solid #e5e7eb;
+  border-radius: 50%;
+  overflow: hidden;
+}
+
+.progress-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: conic-gradient(#10b981 0deg, transparent 0deg);
+  border-radius: 50%;
+  transition: transform 0.1s ease;
+  transform-origin: center;
+}
+
+/* Enhanced Controls Section */
 .controls-section {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
   margin-bottom: 3rem;
   gap: 2rem;
+  padding: 1.5rem;
+  background: rgba(255, 255, 255, 0.8);
+  border-radius: 12px;
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.3);
 }
 
 .mapped-keys-section {
@@ -341,98 +485,121 @@ input:focus {
 
 .mapped-keys-label {
   font-size: 1.1rem;
-  font-weight: 500;
+  font-weight: 600;
   color: #333;
 }
 
 .mapped-keys {
   display: flex;
   gap: 0.5rem;
+  flex-wrap: wrap;
 }
 
 .mapped-key {
-  width: 50px;
-  height: 50px;
-  border: 2px solid #333;
+  width: 40px;
+  height: 40px;
+  border: 2px solid #3b82f6;
   border-radius: 8px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 1.2rem;
+  font-size: 1rem;
   font-weight: bold;
-  background-color: white;
-  color: #333;
+  background: linear-gradient(145deg, #dbeafe, #bfdbfe);
+  color: #1e40af;
+  transition: all 0.3s ease;
+}
+
+.mapped-key:hover {
+  transform: scale(1.1);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
 }
 
 .instructions {
-  text-align: right;
+  text-align: center;
   font-size: 1.1rem;
   line-height: 1.8;
   color: #333;
-}
-
-.edit-mode-btn {
-  display: block;
-  margin: 0 auto;
-}
-
-.no-keys {
-  color: #666;
-  font-style: italic;
-  padding: 0.5rem;
-}
-
-.remove-clip-btn {
-  width: 30px;
-  height: 30px;
-  min-width: 30px;
-  padding: 0;
-  border-radius: 50%;
-  background-color: #ef4444;
-  color: white;
-  border-color: #ef4444;
-  font-size: 1rem;
-  font-weight: bold;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-}
-
-.remove-clip-btn:hover {
-  background-color: #dc2626;
-  border-color: #dc2626;
-  color: white;
+  font-weight: 500;
 }
 
 .playback-status {
-  text-align: center;
+  text-align: right;
   font-size: 1rem;
   color: #666;
 }
 
 .background-status {
-  margin-bottom: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.performance-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.performance-stats > div {
+  padding: 0.5rem;
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 6px;
+  font-weight: 500;
 }
 
 #bg-status {
   font-weight: bold;
   text-transform: uppercase;
+  padding: 0.3rem 0.6rem;
+  border-radius: 4px;
+  font-size: 0.9rem;
 }
 
 #bg-status.playing {
-  color: #22c55e;
+  color: #ffffff;
+  background-color: #22c55e;
+  box-shadow: 0 0 10px rgba(34, 197, 94, 0.4);
 }
 
 #bg-status.paused {
-  color: #f59e0b;
+  color: #ffffff;
+  background-color: #f59e0b;
+  box-shadow: 0 0 10px rgba(245, 158, 11, 0.4);
 }
 
 #bg-status.stopped {
-  color: #6b7280;
+  color: #ffffff;
+  background-color: #6b7280;
 }
 
-/* Responsive Design */
+#keys-pressed, #session-time {
+  font-weight: bold;
+  color: #3b82f6;
+}
+
+/* Enhanced Responsive Design */
+@media (max-width: 1024px) {
+  .virtual-keyboard {
+    padding: 1rem;
+    margin: 1.5rem 0;
+  }
+  
+  .virtual-key {
+    width: 45px;
+    height: 45px;
+  }
+  
+  .controls-section {
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 1.5rem;
+  }
+  
+  .playback-status {
+    text-align: center;
+  }
+}
+
 @media (max-width: 768px) {
   .clip-row {
     flex-wrap: wrap;
@@ -461,14 +628,26 @@ input:focus {
     right: -10px;
   }
   
-  .controls-section {
-    flex-direction: column;
-    align-items: center;
-    text-align: center;
+  .virtual-keyboard {
+    padding: 0.8rem;
+  }
+  
+  .virtual-key {
+    width: 40px;
+    height: 40px;
+    font-size: 0.8rem;
+  }
+  
+  .keyboard-row {
+    gap: 0.3rem;
   }
   
   .instructions {
     text-align: center;
+  }
+  
+  .audio-visualizer {
+    display: none; /* Hide on mobile for performance */
   }
 }
 
@@ -488,6 +667,18 @@ input:focus {
   
   .video-canvas {
     height: 250px;
+  }
+  
+  .virtual-key {
+    width: 35px;
+    height: 35px;
+    font-size: 0.7rem;
+  }
+  
+  .performance-stats {
+    flex-direction: row;
+    justify-content: center;
+    gap: 1rem;
   }
 }
 
