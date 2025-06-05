@@ -121,6 +121,7 @@ input:focus {
   gap: 1rem;
   justify-content: center;
   margin-bottom: 3rem;
+  align-items: center;
 }
 
 .background-track {
@@ -128,8 +129,36 @@ input:focus {
   max-width: 400px;
 }
 
+.background-track[readonly] {
+  background-color: #f9f9f9;
+  color: #333;
+  cursor: default;
+}
+
 .upload-btn {
   min-width: 100px;
+}
+
+.clear-audio-btn {
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  padding: 0;
+  border-radius: 50%;
+  background-color: #ef4444;
+  color: white;
+  border-color: #ef4444;
+  font-size: 1.2rem;
+  font-weight: bold;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.clear-audio-btn:hover {
+  background-color: #dc2626;
+  border-color: #dc2626;
+  color: white;
 }
 
 .clips-section {

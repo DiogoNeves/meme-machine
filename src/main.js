@@ -7,6 +7,7 @@ let clips = [
   { key: 'S', url: '', timestamp: '', duration: '' }
 ];
 let backgroundTrack = '';
+let backgroundAudioFile = null; // Store the actual audio file
 let isListeningForKey = false;
 let listeningClipIndex = -1;
 
@@ -49,8 +50,10 @@ function renderEditMode() {
       <h1>Edit Mode</h1>
       
       <div class="background-section">
-        <input type="text" class="background-track" placeholder="background track (optional)" value="${backgroundTrack}">
+        <input type="text" class="background-track" placeholder="background track (optional)" value="${backgroundTrack}" readonly>
         <button class="upload-btn">Upload</button>
+        <input type="file" class="audio-file-input" accept="audio/*" style="display: none;">
+        ${backgroundAudioFile ? '<button class="clear-audio-btn">×</button>' : ''}
       </div>
       
       <div class="clips-section">
@@ -158,6 +161,9 @@ function setupEditModeListeners() {
   const playBtn = document.querySelector('.play-mode-btn');
   const mapNewKeyBtn = document.querySelector('.map-new-key-btn');
   const backgroundTrackInput = document.querySelector('.background-track');
+  const uploadBtn = document.querySelector('.upload-btn');
+  const audioFileInput = document.querySelector('.audio-file-input');
+  const clearAudioBtn = document.querySelector('.clear-audio-btn');
   const keyButtons = document.querySelectorAll('.key-button');
   
   // Play button
@@ -179,10 +185,36 @@ function setupEditModeListeners() {
     });
   }
   
-  // Background track input
+  // Background track input (now readonly, but keep for manual URL input)
   if (backgroundTrackInput) {
     backgroundTrackInput.addEventListener('input', (e) => {
-      backgroundTrack = e.target.value;
+      if (!backgroundAudioFile) { // Only allow manual input if no file is uploaded
+        backgroundTrack = e.target.value;
+      }
+    });
+  }
+  
+  // Upload button
+  if (uploadBtn) {
+    uploadBtn.addEventListener('click', () => {
+      audioFileInput.click();
+    });
+  }
+  
+  // Audio file input
+  if (audioFileInput) {
+    audioFileInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (file) {
+        handleAudioFileUpload(file);
+      }
+    });
+  }
+  
+  // Clear audio button
+  if (clearAudioBtn) {
+    clearAudioBtn.addEventListener('click', () => {
+      clearBackgroundAudio();
     });
   }
   
@@ -290,6 +322,58 @@ function handlePlayModeKeyUp(e) {
     console.log(`Stopping clip for key: ${key}`);
     // TODO: Implement clip stop
   }
+}
+
+// Handle audio file upload
+function handleAudioFileUpload(file) {
+  // Validate file type
+  if (!file.type.startsWith('audio/')) {
+    alert('Please select a valid audio file.');
+    return;
+  }
+  
+  // Check file size (limit to 50MB)
+  const maxSize = 50 * 1024 * 1024; // 50MB in bytes
+  if (file.size > maxSize) {
+    alert('File size is too large. Please select a file smaller than 50MB.');
+    return;
+  }
+  
+  // Store the file and update UI
+  backgroundAudioFile = file;
+  backgroundTrack = file.name;
+  
+  // Create audio URL for preview/playback
+  if (backgroundAudioFile.audioUrl) {
+    URL.revokeObjectURL(backgroundAudioFile.audioUrl);
+  }
+  backgroundAudioFile.audioUrl = URL.createObjectURL(file);
+  
+  console.log('Background audio loaded:', file.name, 'Size:', (file.size / 1024 / 1024).toFixed(2) + 'MB');
+  
+  // Re-render to show the clear button and updated filename
+  renderCurrentMode();
+}
+
+// Clear background audio
+function clearBackgroundAudio() {
+  if (backgroundAudioFile && backgroundAudioFile.audioUrl) {
+    URL.revokeObjectURL(backgroundAudioFile.audioUrl);
+  }
+  
+  backgroundAudioFile = null;
+  backgroundTrack = '';
+  
+  // Clear the file input
+  const audioFileInput = document.querySelector('.audio-file-input');
+  if (audioFileInput) {
+    audioFileInput.value = '';
+  }
+  
+  console.log('Background audio cleared');
+  
+  // Re-render to hide the clear button
+  renderCurrentMode();
 }
 
 // Start the app
