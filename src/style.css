@@ -99,6 +99,17 @@ input:focus {
   border-color: #666;
 }
 
+/* URL Validation Styles */
+.clip-url.valid {
+  border-color: #22c55e;
+  background-color: #f0fdf4;
+}
+
+.clip-url.invalid {
+  border-color: #ef4444;
+  background-color: #fef2f2;
+}
+
 /* Edit Mode Styles */
 .edit-mode {
   max-width: 800px;
@@ -145,6 +156,29 @@ input:focus {
   font-weight: bold;
   background-color: white;
   color: #333;
+  cursor: pointer;
+  transition: all 0.25s;
+}
+
+.key-button:hover {
+  background-color: #f0f0f0;
+  border-color: #666;
+}
+
+.key-button.listening {
+  background-color: #3b82f6;
+  color: white;
+  border-color: #3b82f6;
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.05);
+  }
 }
 
 .clip-url {
@@ -170,8 +204,46 @@ input:focus {
   color: white;
 }
 
-.play-mode-btn:hover {
+.play-mode-btn:hover:not(:disabled) {
   background-color: #555;
+}
+
+.play-mode-btn:disabled {
+  background-color: #ccc;
+  color: #666;
+  cursor: not-allowed;
+  border-color: #ccc;
+}
+
+.play-mode-btn:disabled:hover {
+  background-color: #ccc;
+  color: #666;
+}
+
+/* Edit Mode Instructions */
+.instructions-edit {
+  text-align: center;
+  margin: 2rem 0;
+  font-size: 1rem;
+}
+
+.listening-message {
+  color: #3b82f6;
+  font-weight: 500;
+  animation: fadeIn 0.3s ease-in;
+}
+
+.mapping-instructions {
+  color: #666;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 /* Play Mode Styles */
@@ -247,6 +319,12 @@ input:focus {
 .edit-mode-btn {
   display: block;
   margin: 0 auto;
+}
+
+.no-keys {
+  color: #666;
+  font-style: italic;
+  padding: 0.5rem;
 }
 
 /* Responsive Design */

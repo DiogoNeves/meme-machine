@@ -7,6 +7,8 @@ let clips = [
   { key: 'S', url: '', timestamp: '', duration: '' }
 ];
 let backgroundTrack = '';
+let isListeningForKey = false;
+let listeningClipIndex = -1;
 
 // Initialize the app
 function init() {
@@ -30,12 +32,15 @@ function renderCurrentMode() {
 
 // Render Edit Mode
 function renderEditMode() {
-  const clipsHTML = clips.map(clip => `
+  const clipsHTML = clips.map((clip, index) => `
     <div class="clip-row">
-      <div class="key-button">${clip.key}</div>
-      <input type="text" class="clip-url" placeholder="Clip URL" value="${clip.url}">
-      <input type="text" class="timestamp" placeholder="timestamp" value="${clip.timestamp}">
-      <input type="text" class="duration" placeholder="duration" value="${clip.duration}">
+      <div class="key-button ${isListeningForKey && listeningClipIndex === index ? 'listening' : ''}" 
+           data-clip-index="${index}">
+        ${clip.key || '?'}
+      </div>
+      <input type="text" class="clip-url" placeholder="Clip URL" value="${clip.url}" data-clip-index="${index}">
+      <input type="text" class="timestamp" placeholder="0:00" value="${clip.timestamp}" data-clip-index="${index}">
+      <input type="text" class="duration" placeholder="2.5s" value="${clip.duration}" data-clip-index="${index}">
     </div>
   `).join('');
 
@@ -44,7 +49,7 @@ function renderEditMode() {
       <h1>Edit Mode</h1>
       
       <div class="background-section">
-        <input type="text" class="background-track" placeholder="background track" value="${backgroundTrack}">
+        <input type="text" class="background-track" placeholder="background track (optional)" value="${backgroundTrack}">
         <button class="upload-btn">Upload</button>
       </div>
       
@@ -53,16 +58,24 @@ function renderEditMode() {
         <button class="map-new-key-btn">Map new key</button>
       </div>
       
-      <button class="play-mode-btn">Play</button>
+      <div class="instructions-edit">
+        ${isListeningForKey ? 
+          '<div class="listening-message">Press any letter key to map it...</div>' : 
+          '<div class="mapping-instructions">Click on a key button to map it to a different key</div>'
+        }
+      </div>
+      
+      <button class="play-mode-btn" ${clips.some(c => c.url && c.key) ? '' : 'disabled'}>Play</button>
     </div>
   `;
 }
 
 // Render Play Mode
 function renderPlayMode() {
-  const mappedKeysHTML = clips.map(clip => `
-    <div class="mapped-key">${clip.key}</div>
-  `).join('');
+  const mappedKeysHTML = clips
+    .filter(clip => clip.key && clip.url)
+    .map(clip => `<div class="mapped-key">${clip.key}</div>`)
+    .join('');
 
   return `
     <div class="play-mode">
@@ -76,7 +89,7 @@ function renderPlayMode() {
         <div class="mapped-keys-section">
           <span class="mapped-keys-label">Mapped keys</span>
           <div class="mapped-keys">
-            ${mappedKeysHTML}
+            ${mappedKeysHTML || '<div class="no-keys">No keys mapped</div>'}
           </div>
         </div>
         
@@ -93,7 +106,42 @@ function renderPlayMode() {
 
 // Setup general event listeners
 function setupEventListeners() {
-  // This will be called once on init
+  // Global keydown listener for key mapping
+  document.addEventListener('keydown', handleGlobalKeyDown);
+}
+
+// Handle global key presses (for key mapping and play mode)
+function handleGlobalKeyDown(e) {
+  if (currentMode === 'edit' && isListeningForKey && listeningClipIndex >= 0) {
+    handleKeyMapping(e);
+  } else if (currentMode === 'play') {
+    handlePlayModeKeyDown(e);
+  }
+}
+
+// Handle key mapping in edit mode
+function handleKeyMapping(e) {
+  const key = e.key.toUpperCase();
+  
+  // Only allow letter keys
+  if (key.length === 1 && key >= 'A' && key <= 'Z') {
+    // Check if key is already used
+    const existingClip = clips.find(clip => clip.key === key);
+    if (existingClip && clips.indexOf(existingClip) !== listeningClipIndex) {
+      alert(`Key "${key}" is already mapped to another clip!`);
+      return;
+    }
+    
+    // Map the key
+    clips[listeningClipIndex].key = key;
+    
+    // Stop listening
+    isListeningForKey = false;
+    listeningClipIndex = -1;
+    
+    // Re-render to update UI
+    renderCurrentMode();
+  }
 }
 
 // Setup mode-specific event listeners
@@ -110,42 +158,91 @@ function setupEditModeListeners() {
   const playBtn = document.querySelector('.play-mode-btn');
   const mapNewKeyBtn = document.querySelector('.map-new-key-btn');
   const backgroundTrackInput = document.querySelector('.background-track');
+  const keyButtons = document.querySelectorAll('.key-button');
   
+  // Play button
   if (playBtn) {
     playBtn.addEventListener('click', () => {
-      currentMode = 'play';
-      renderCurrentMode();
+      if (clips.some(c => c.url && c.key)) {
+        currentMode = 'play';
+        renderCurrentMode();
+      }
     });
   }
   
+  // Map new key button
   if (mapNewKeyBtn) {
     mapNewKeyBtn.addEventListener('click', () => {
-      // For now, just add a new clip with the next letter
       const nextKey = String.fromCharCode(65 + clips.length); // A, B, C, etc.
       clips.push({ key: nextKey, url: '', timestamp: '', duration: '' });
       renderCurrentMode();
     });
   }
   
+  // Background track input
   if (backgroundTrackInput) {
     backgroundTrackInput.addEventListener('input', (e) => {
       backgroundTrack = e.target.value;
     });
   }
   
-  // Setup clip input listeners
-  const clipInputs = document.querySelectorAll('.clip-url, .timestamp, .duration');
-  clipInputs.forEach((input, index) => {
-    input.addEventListener('input', (e) => {
-      const clipIndex = Math.floor(index / 3);
-      const fieldIndex = index % 3;
-      const fields = ['url', 'timestamp', 'duration'];
-      
-      if (clips[clipIndex]) {
-        clips[clipIndex][fields[fieldIndex]] = e.target.value;
+  // Key buttons for mapping
+  keyButtons.forEach(button => {
+    button.addEventListener('click', (e) => {
+      const clipIndex = parseInt(e.target.dataset.clipIndex);
+      if (clipIndex >= 0) {
+        // Start listening for key mapping
+        isListeningForKey = true;
+        listeningClipIndex = clipIndex;
+        renderCurrentMode();
       }
     });
   });
+  
+  // Clip input fields
+  const clipInputs = document.querySelectorAll('.clip-url, .timestamp, .duration');
+  clipInputs.forEach(input => {
+    input.addEventListener('input', (e) => {
+      const clipIndex = parseInt(e.target.dataset.clipIndex);
+      const fieldType = e.target.classList.contains('clip-url') ? 'url' :
+                       e.target.classList.contains('timestamp') ? 'timestamp' : 'duration';
+      
+      if (clips[clipIndex]) {
+        clips[clipIndex][fieldType] = e.target.value;
+        
+        // Validate YouTube URL
+        if (fieldType === 'url' && e.target.value) {
+          validateYouTubeUrl(e.target.value, e.target);
+        }
+        
+        // Update play button state
+        updatePlayButtonState();
+      }
+    });
+  });
+}
+
+// Validate YouTube URL
+function validateYouTubeUrl(url, input) {
+  const youtubeRegex = /^(https?:\/\/)?(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/;
+  const isValid = youtubeRegex.test(url);
+  
+  if (isValid) {
+    input.classList.remove('invalid');
+    input.classList.add('valid');
+  } else {
+    input.classList.remove('valid');
+    input.classList.add('invalid');
+  }
+}
+
+// Update play button state
+function updatePlayButtonState() {
+  const playBtn = document.querySelector('.play-mode-btn');
+  if (playBtn) {
+    const hasValidClips = clips.some(c => c.url && c.key);
+    playBtn.disabled = !hasValidClips;
+  }
 }
 
 // Setup Play Mode event listeners
@@ -159,35 +256,35 @@ function setupPlayModeListeners() {
     });
   }
   
-  // Keyboard event listeners for play mode
-  document.addEventListener('keydown', handleKeyDown);
-  document.addEventListener('keyup', handleKeyUp);
+  // Add keyup listener for play mode
+  document.addEventListener('keyup', handlePlayModeKeyUp);
 }
 
 // Handle key press in play mode
-function handleKeyDown(e) {
+function handlePlayModeKeyDown(e) {
   if (currentMode !== 'play') return;
   
   const key = e.key.toUpperCase();
-  const clip = clips.find(c => c.key === key);
+  const clip = clips.find(c => c.key === key && c.url);
   
   if (clip) {
-    console.log(`Playing clip for key: ${key}`);
+    console.log(`Playing clip for key: ${key}`, clip);
     // TODO: Implement clip playback
   }
   
   if (e.key === ' ') {
+    e.preventDefault(); // Prevent page scroll
     console.log('Starting background track');
     // TODO: Implement background track playback
   }
 }
 
 // Handle key release in play mode
-function handleKeyUp(e) {
+function handlePlayModeKeyUp(e) {
   if (currentMode !== 'play') return;
   
   const key = e.key.toUpperCase();
-  const clip = clips.find(c => c.key === key);
+  const clip = clips.find(c => c.key === key && c.url);
   
   if (clip) {
     console.log(`Stopping clip for key: ${key}`);
