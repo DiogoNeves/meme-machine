@@ -3,18 +3,74 @@ import './style.css'
 // Application state
 let currentMode = 'edit'; // 'edit' or 'play'
 let clips = [
-  { key: 'A', url: '', timestamp: '', duration: '' },
-  { key: 'S', url: '', timestamp: '', duration: '' }
+  { key: 'A', url: '', timestamp: '', duration: '' }
 ];
 let backgroundTrack = '';
 let backgroundAudioFile = null; // Store the actual audio file
 let isListeningForKey = false;
 let listeningClipIndex = -1;
 
+// Play mode state
+let backgroundAudioElement = null;
+let youtubePlayers = {}; // Store YouTube players by clip key
+let activeClips = {}; // Track which clips are currently playing
+let clipTimeouts = {}; // Store timeouts for clip duration limits
+let isYouTubeAPIReady = false;
+
 // Initialize the app
 function init() {
+  loadYouTubeAPI();
   renderCurrentMode();
   setupEventListeners();
+}
+
+// Load YouTube iFrame API
+function loadYouTubeAPI() {
+  if (window.YT) {
+    isYouTubeAPIReady = true;
+    return;
+  }
+  
+  const tag = document.createElement('script');
+  tag.src = 'https://www.youtube.com/iframe_api';
+  const firstScriptTag = document.getElementsByTagName('script')[0];
+  firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+  
+  // YouTube API callback
+  window.onYouTubeIframeAPIReady = () => {
+    isYouTubeAPIReady = true;
+    console.log('YouTube API loaded');
+  };
+}
+
+// Extract YouTube video ID from URL
+function extractYouTubeVideoId(url) {
+  const regex = /(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/;
+  const match = url.match(regex);
+  return match ? match[1] : null;
+}
+
+// Parse timestamp to seconds
+function parseTimestamp(timestamp) {
+  if (!timestamp) return 0;
+  
+  // Handle formats like "1:30", "90", "1m30s", etc.
+  const timeRegex = /(?:(\d+)[:m])?(\d+)(?:[s])?/;
+  const match = timestamp.match(timeRegex);
+  
+  if (match) {
+    const minutes = parseInt(match[1] || 0);
+    const seconds = parseInt(match[2] || 0);
+    return minutes * 60 + seconds;
+  }
+  
+  return parseFloat(timestamp) || 0;
+}
+
+// Parse duration to seconds
+function parseDuration(duration) {
+  if (!duration) return 5; // Default 5 seconds
+  return parseFloat(duration) || 5;
 }
 
 // Render the current mode
@@ -25,6 +81,9 @@ function renderCurrentMode() {
     app.innerHTML = renderEditMode();
   } else {
     app.innerHTML = renderPlayMode();
+    if (currentMode === 'play') {
+      setupPlayMode();
+    }
   }
   
   // Re-setup event listeners after rendering
@@ -42,6 +101,7 @@ function renderEditMode() {
       <input type="text" class="clip-url" placeholder="Clip URL" value="${clip.url}" data-clip-index="${index}">
       <input type="text" class="timestamp" placeholder="0:00" value="${clip.timestamp}" data-clip-index="${index}">
       <input type="text" class="duration" placeholder="2.5s" value="${clip.duration}" data-clip-index="${index}">
+      <button class="remove-clip-btn" data-clip-index="${index}" title="Remove this clip">×</button>
     </div>
   `).join('');
 
@@ -85,7 +145,10 @@ function renderPlayMode() {
       <h1>Play Mode</h1>
       
       <div class="video-canvas">
-        <div class="canvas-placeholder">Video Canvas</div>
+        <div class="canvas-content">
+          <div class="video-placeholder">Press a key to play video</div>
+          <div class="youtube-players"></div>
+        </div>
       </div>
       
       <div class="controls-section">
@@ -98,13 +161,193 @@ function renderPlayMode() {
         
         <div class="instructions">
           <div>Press keys to play clip</div>
-          <div>Press space to start</div>
+          <div>Press space to start/stop music</div>
+        </div>
+        
+        <div class="playback-status">
+          <div class="background-status">Background: <span id="bg-status">stopped</span></div>
         </div>
       </div>
       
       <button class="edit-mode-btn">Back to Edit</button>
     </div>
   `;
+}
+
+// Setup Play Mode
+function setupPlayMode() {
+  setupBackgroundAudio();
+  setupYouTubePlayers();
+}
+
+// Setup background audio
+function setupBackgroundAudio() {
+  if (backgroundAudioFile && backgroundAudioFile.audioUrl) {
+    backgroundAudioElement = new Audio(backgroundAudioFile.audioUrl);
+    backgroundAudioElement.loop = true;
+    backgroundAudioElement.volume = 0.7; // Slightly lower volume for background
+    
+    backgroundAudioElement.addEventListener('play', () => {
+      updateBackgroundStatus('playing');
+    });
+    
+    backgroundAudioElement.addEventListener('pause', () => {
+      updateBackgroundStatus('paused');
+    });
+    
+    backgroundAudioElement.addEventListener('ended', () => {
+      updateBackgroundStatus('stopped');
+    });
+    
+    console.log('Background audio ready');
+  }
+}
+
+// Setup YouTube players
+function setupYouTubePlayers() {
+  if (!isYouTubeAPIReady) {
+    console.log('YouTube API not ready yet');
+    return;
+  }
+  
+  const playersContainer = document.querySelector('.youtube-players');
+  if (!playersContainer) return;
+  
+  // Clear existing players
+  youtubePlayers = {};
+  playersContainer.innerHTML = '';
+  
+  // Create players for clips with URLs
+  clips.forEach(clip => {
+    if (clip.url && clip.key) {
+      const videoId = extractYouTubeVideoId(clip.url);
+      if (videoId) {
+        createYouTubePlayer(clip.key, videoId, playersContainer);
+      }
+    }
+  });
+}
+
+// Create a YouTube player
+function createYouTubePlayer(key, videoId, container) {
+  const playerDiv = document.createElement('div');
+  playerDiv.id = `player-${key}`;
+  playerDiv.style.display = 'none';
+  container.appendChild(playerDiv);
+  
+  const player = new YT.Player(`player-${key}`, {
+    height: '100%',
+    width: '100%',
+    videoId: videoId,
+    playerVars: {
+      autoplay: 0,
+      controls: 0,
+      disablekb: 1,
+      fs: 0,
+      modestbranding: 1,
+      rel: 0
+    },
+    events: {
+      onReady: (event) => {
+        console.log(`Player ready for key: ${key}`);
+      },
+      onStateChange: (event) => {
+        if (event.data === YT.PlayerState.ENDED) {
+          stopClip(key);
+        }
+      }
+    }
+  });
+  
+  youtubePlayers[key] = player;
+}
+
+// Update background status
+function updateBackgroundStatus(status) {
+  const statusElement = document.getElementById('bg-status');
+  if (statusElement) {
+    statusElement.textContent = status;
+    statusElement.className = status;
+  }
+}
+
+// Play a clip
+function playClip(key) {
+  const clip = clips.find(c => c.key === key && c.url);
+  if (!clip || activeClips[key]) return;
+  
+  const player = youtubePlayers[key];
+  if (!player) return;
+  
+  const startTime = parseTimestamp(clip.timestamp);
+  const duration = parseDuration(clip.duration);
+  
+  // Show and play the video
+  const playerDiv = document.getElementById(`player-${key}`);
+  if (playerDiv) {
+    // Hide placeholder
+    const placeholder = document.querySelector('.video-placeholder');
+    if (placeholder) placeholder.style.display = 'none';
+    
+    // Show and play this video
+    playerDiv.style.display = 'block';
+    player.seekTo(startTime);
+    player.playVideo();
+    
+    activeClips[key] = true;
+    
+    // Set timeout for duration limit
+    clipTimeouts[key] = setTimeout(() => {
+      stopClip(key);
+    }, duration * 1000);
+    
+    console.log(`Playing clip ${key} from ${startTime}s for ${duration}s`);
+  }
+}
+
+// Stop a clip
+function stopClip(key) {
+  const player = youtubePlayers[key];
+  if (!player || !activeClips[key]) return;
+  
+  // Stop the video
+  player.pauseVideo();
+  
+  // Hide the video
+  const playerDiv = document.getElementById(`player-${key}`);
+  if (playerDiv) {
+    playerDiv.style.display = 'none';
+  }
+  
+  // Show placeholder if no other videos are playing
+  const hasActiveClips = Object.values(activeClips).some(active => active);
+  if (!hasActiveClips) {
+    const placeholder = document.querySelector('.video-placeholder');
+    if (placeholder) placeholder.style.display = 'block';
+  }
+  
+  // Clear timeout
+  if (clipTimeouts[key]) {
+    clearTimeout(clipTimeouts[key]);
+    delete clipTimeouts[key];
+  }
+  
+  activeClips[key] = false;
+  
+  console.log(`Stopped clip ${key}`);
+}
+
+// Toggle background audio
+function toggleBackgroundAudio() {
+  if (!backgroundAudioElement) return;
+  
+  if (backgroundAudioElement.paused) {
+    backgroundAudioElement.play().catch(e => {
+      console.error('Failed to play background audio:', e);
+    });
+  } else {
+    backgroundAudioElement.pause();
+  }
 }
 
 // Setup general event listeners
@@ -165,6 +408,7 @@ function setupEditModeListeners() {
   const audioFileInput = document.querySelector('.audio-file-input');
   const clearAudioBtn = document.querySelector('.clear-audio-btn');
   const keyButtons = document.querySelectorAll('.key-button');
+  const removeButtons = document.querySelectorAll('.remove-clip-btn');
   
   // Play button
   if (playBtn) {
@@ -184,6 +428,21 @@ function setupEditModeListeners() {
       renderCurrentMode();
     });
   }
+  
+  // Remove clip buttons
+  removeButtons.forEach(button => {
+    button.addEventListener('click', (e) => {
+      const clipIndex = parseInt(e.target.dataset.clipIndex);
+      if (clipIndex >= 0 && clips.length > 1) { // Keep at least one clip
+        clips.splice(clipIndex, 1);
+        renderCurrentMode();
+      } else if (clips.length === 1) {
+        // Reset the single clip instead of removing it
+        clips[0] = { key: 'A', url: '', timestamp: '', duration: '' };
+        renderCurrentMode();
+      }
+    });
+  });
   
   // Background track input (now readonly, but keep for manual URL input)
   if (backgroundTrackInput) {
@@ -254,76 +513,6 @@ function setupEditModeListeners() {
   });
 }
 
-// Validate YouTube URL
-function validateYouTubeUrl(url, input) {
-  const youtubeRegex = /^(https?:\/\/)?(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/;
-  const isValid = youtubeRegex.test(url);
-  
-  if (isValid) {
-    input.classList.remove('invalid');
-    input.classList.add('valid');
-  } else {
-    input.classList.remove('valid');
-    input.classList.add('invalid');
-  }
-}
-
-// Update play button state
-function updatePlayButtonState() {
-  const playBtn = document.querySelector('.play-mode-btn');
-  if (playBtn) {
-    const hasValidClips = clips.some(c => c.url && c.key);
-    playBtn.disabled = !hasValidClips;
-  }
-}
-
-// Setup Play Mode event listeners
-function setupPlayModeListeners() {
-  const editBtn = document.querySelector('.edit-mode-btn');
-  
-  if (editBtn) {
-    editBtn.addEventListener('click', () => {
-      currentMode = 'edit';
-      renderCurrentMode();
-    });
-  }
-  
-  // Add keyup listener for play mode
-  document.addEventListener('keyup', handlePlayModeKeyUp);
-}
-
-// Handle key press in play mode
-function handlePlayModeKeyDown(e) {
-  if (currentMode !== 'play') return;
-  
-  const key = e.key.toUpperCase();
-  const clip = clips.find(c => c.key === key && c.url);
-  
-  if (clip) {
-    console.log(`Playing clip for key: ${key}`, clip);
-    // TODO: Implement clip playback
-  }
-  
-  if (e.key === ' ') {
-    e.preventDefault(); // Prevent page scroll
-    console.log('Starting background track');
-    // TODO: Implement background track playback
-  }
-}
-
-// Handle key release in play mode
-function handlePlayModeKeyUp(e) {
-  if (currentMode !== 'play') return;
-  
-  const key = e.key.toUpperCase();
-  const clip = clips.find(c => c.key === key && c.url);
-  
-  if (clip) {
-    console.log(`Stopping clip for key: ${key}`);
-    // TODO: Implement clip stop
-  }
-}
-
 // Handle audio file upload
 function handleAudioFileUpload(file) {
   // Validate file type
@@ -374,6 +563,79 @@ function clearBackgroundAudio() {
   
   // Re-render to hide the clear button
   renderCurrentMode();
+}
+
+// Validate YouTube URL
+function validateYouTubeUrl(url, input) {
+  const youtubeRegex = /^(https?:\/\/)?(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/;
+  const isValid = youtubeRegex.test(url);
+  
+  if (isValid) {
+    input.classList.remove('invalid');
+    input.classList.add('valid');
+  } else {
+    input.classList.remove('valid');
+    input.classList.add('invalid');
+  }
+}
+
+// Update play button state
+function updatePlayButtonState() {
+  const playBtn = document.querySelector('.play-mode-btn');
+  if (playBtn) {
+    const hasValidClips = clips.some(c => c.url && c.key);
+    playBtn.disabled = !hasValidClips;
+  }
+}
+
+// Setup Play Mode event listeners
+function setupPlayModeListeners() {
+  const editBtn = document.querySelector('.edit-mode-btn');
+  
+  if (editBtn) {
+    editBtn.addEventListener('click', () => {
+      // Stop all active clips and background audio
+      Object.keys(activeClips).forEach(key => stopClip(key));
+      if (backgroundAudioElement) {
+        backgroundAudioElement.pause();
+      }
+      
+      currentMode = 'edit';
+      renderCurrentMode();
+    });
+  }
+  
+  // Add keyup listener for play mode
+  document.addEventListener('keyup', handlePlayModeKeyUp);
+}
+
+// Handle key press in play mode
+function handlePlayModeKeyDown(e) {
+  if (currentMode !== 'play') return;
+  
+  const key = e.key.toUpperCase();
+  const clip = clips.find(c => c.key === key && c.url);
+  
+  if (clip && !activeClips[key]) {
+    playClip(key);
+  }
+  
+  if (e.key === ' ') {
+    e.preventDefault(); // Prevent page scroll
+    toggleBackgroundAudio();
+  }
+}
+
+// Handle key release in play mode
+function handlePlayModeKeyUp(e) {
+  if (currentMode !== 'play') return;
+  
+  const key = e.key.toUpperCase();
+  const clip = clips.find(c => c.key === key && c.url);
+  
+  if (clip && activeClips[key]) {
+    stopClip(key);
+  }
 }
 
 // Start the app
