@@ -1,0 +1,24 @@
+<svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Sample machine body -->
+  <rect x="2" y="8" width="28" height="20" rx="3" fill="#2563eb" stroke="#1d4ed8" stroke-width="1"/>
+  
+  <!-- Top section -->
+  <rect x="4" y="10" width="24" height="6" rx="1" fill="#3b82f6"/>
+  
+  <!-- Button row 1 -->
+  <circle cx="8" cy="20" r="2.5" fill="#10b981" stroke="#059669" stroke-width="0.5"/>
+  <circle cx="16" cy="20" r="2.5" fill="#10b981" stroke="#059669" stroke-width="0.5"/>
+  <circle cx="24" cy="20" r="2.5" fill="#10b981" stroke="#059669" stroke-width="0.5"/>
+  
+  <!-- Button row 2 -->
+  <circle cx="12" cy="25" r="1.5" fill="#f59e0b" stroke="#d97706" stroke-width="0.5"/>
+  <circle cx="20" cy="25" r="1.5" fill="#f59e0b" stroke="#d97706" stroke-width="0.5"/>
+  
+  <!-- LED indicator -->
+  <circle cx="26" cy="13" r="1" fill="#ef4444"/>
+  
+  <!-- Brand mark -->
+  <rect x="6" y="12" width="1" height="2" fill="#1e40af"/>
+  <rect x="8" y="12" width="1" height="2" fill="#1e40af"/>
+  <rect x="10" y="12" width="1" height="2" fill="#1e40af"/>
+</svg> 
