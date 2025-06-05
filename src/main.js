@@ -371,12 +371,19 @@ function handleKeyMapping(e) {
   
   // Only allow letter keys
   if (key.length === 1 && key >= 'A' && key <= 'Z') {
-    // Check if key is already used
-    const existingClip = clips.find(clip => clip.key === key);
-    if (existingClip && clips.indexOf(existingClip) !== listeningClipIndex) {
+    // Check if key is already used by a different clip
+    const existingClipIndex = clips.findIndex(clip => clip.key === key);
+    if (existingClipIndex !== -1 && existingClipIndex !== listeningClipIndex) {
       alert(`Key "${key}" is already mapped to another clip!`);
       return;
     }
+    
+    // Clear the key from any other clip that might have it (extra safety)
+    clips.forEach((clip, index) => {
+      if (index !== listeningClipIndex && clip.key === key) {
+        clip.key = '';
+      }
+    });
     
     // Map the key
     clips[listeningClipIndex].key = key;
@@ -413,6 +420,7 @@ function setupEditModeListeners() {
   // Play button
   if (playBtn) {
     playBtn.addEventListener('click', () => {
+      validateUniqueKeys(); // Ensure no duplicates before playing
       if (clips.some(c => c.url && c.key)) {
         currentMode = 'play';
         renderCurrentMode();
@@ -423,7 +431,17 @@ function setupEditModeListeners() {
   // Map new key button
   if (mapNewKeyBtn) {
     mapNewKeyBtn.addEventListener('click', () => {
-      const nextKey = String.fromCharCode(65 + clips.length); // A, B, C, etc.
+      // Find next available key
+      const usedKeys = new Set(clips.map(c => c.key).filter(k => k));
+      let nextKey = 'A';
+      for (let i = 0; i < 26; i++) {
+        const testKey = String.fromCharCode(65 + i);
+        if (!usedKeys.has(testKey)) {
+          nextKey = testKey;
+          break;
+        }
+      }
+      
       clips.push({ key: nextKey, url: '', timestamp: '', duration: '' });
       renderCurrentMode();
     });
@@ -435,6 +453,7 @@ function setupEditModeListeners() {
       const clipIndex = parseInt(e.target.dataset.clipIndex);
       if (clipIndex >= 0 && clips.length > 1) { // Keep at least one clip
         clips.splice(clipIndex, 1);
+        validateUniqueKeys(); // Clean up after removal
         renderCurrentMode();
       } else if (clips.length === 1) {
         // Reset the single clip instead of removing it
@@ -636,6 +655,27 @@ function handlePlayModeKeyUp(e) {
   if (clip && activeClips[key]) {
     stopClip(key);
   }
+}
+
+// Validate that no duplicate keys exist (called when adding/removing clips)
+function validateUniqueKeys() {
+  const usedKeys = new Set();
+  const duplicates = [];
+  
+  clips.forEach((clip, index) => {
+    if (clip.key && usedKeys.has(clip.key)) {
+      duplicates.push({ index, key: clip.key });
+    } else if (clip.key) {
+      usedKeys.add(clip.key);
+    }
+  });
+  
+  // Clear duplicate keys (keep first occurrence)
+  duplicates.forEach(({ index }) => {
+    clips[index].key = '';
+  });
+  
+  return duplicates.length === 0;
 }
 
 // Start the app
