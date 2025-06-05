@@ -35,6 +35,13 @@ h1 {
   color: #333;
 }
 
+.mode-subtitle {
+  font-size: 1.2rem;
+  font-weight: 300;
+  color: #666;
+  opacity: 0.8;
+}
+
 #app {
   max-width: 1200px;
   margin: 0 auto;
@@ -871,4 +878,153 @@ input:focus {
 
 .toggle-preview-btn.collapsed:hover {
   background: linear-gradient(145deg, #059669, #047857);
+}
+
+/* Creator Credits */
+.creator-credits {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  z-index: 1000;
+  padding: 0.75rem 1rem;
+  background: linear-gradient(145deg, #ffffff, #f8fafc);
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  text-align: center;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  backdrop-filter: blur(10px);
+  max-width: 280px;
+}
+
+.credits-text {
+  margin-bottom: 0.5rem;
+  font-size: 0.8rem;
+  color: #64748b;
+}
+
+.credits-text strong {
+  color: #334155;
+  font-weight: 600;
+}
+
+.credits-links {
+  display: flex;
+  justify-content: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.credits-links a {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.6rem;
+  background: linear-gradient(145deg, #ffffff, #f1f5f9);
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  color: #475569;
+  text-decoration: none;
+  font-size: 0.75rem;
+  font-weight: 500;
+  transition: all 0.2s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.credits-links a:hover {
+  background: linear-gradient(145deg, #f1f5f9, #e2e8f0);
+  border-color: #cbd5e1;
+  color: #334155;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+}
+
+.credits-links a svg {
+  width: 14px;
+  height: 14px;
+  opacity: 0.8;
+  transition: opacity 0.2s ease;
+}
+
+.credits-links a:hover svg {
+  opacity: 1;
+}
+
+/* GitHub link specific styling */
+.credits-links a[href*="github"] svg {
+  color: #333;
+}
+
+.credits-links a[href*="github"]:hover {
+  background: linear-gradient(145deg, #f8fafc, #f1f5f9);
+  border-color: #333;
+  color: #000;
+}
+
+/* YouTube link specific styling */
+.credits-links a[href*="youtube"] svg {
+  color: #ff0000;
+}
+
+.credits-links a[href*="youtube"]:hover {
+  background: linear-gradient(145deg, #fef2f2, #fee2e2);
+  border-color: #ff0000;
+  color: #dc2626;
+}
+
+/* Mobile responsiveness for credits */
+@media (max-width: 768px) {
+  .creator-credits {
+    top: 15px;
+    right: 15px;
+    padding: 0.6rem 0.8rem;
+    max-width: 250px;
+  }
+  
+  .credits-text {
+    font-size: 0.75rem;
+    margin-bottom: 0.4rem;
+  }
+  
+  .credits-links {
+    gap: 0.5rem;
+  }
+  
+  .credits-links a {
+    font-size: 0.7rem;
+    padding: 0.3rem 0.5rem;
+  }
+  
+  .credits-links a svg {
+    width: 12px;
+    height: 12px;
+  }
+}
+
+@media (max-width: 480px) {
+  .creator-credits {
+    top: 10px;
+    right: 10px;
+    left: 10px;
+    padding: 0.5rem 0.6rem;
+    max-width: none;
+  }
+  
+  .credits-text {
+    font-size: 0.7rem;
+  }
+  
+  .credits-links {
+    gap: 0.4rem;
+  }
+  
+  .credits-links a {
+    font-size: 0.65rem;
+    padding: 0.25rem 0.4rem;
+    gap: 0.3rem;
+  }
+  
+  .credits-links a svg {
+    width: 11px;
+    height: 11px;
+  }
 }
