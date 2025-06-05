@@ -9,6 +9,7 @@ let backgroundTrack = '';
 let backgroundAudioFile = null; // Store the actual audio file
 let isListeningForKey = false;
 let listeningClipIndex = -1;
+let collapsedPreviews = {}; // Track which previews are collapsed
 
 // Play mode state
 let backgroundAudioElement = null;
@@ -28,6 +29,7 @@ const STORAGE_KEYS = {
   backgroundTrack: 'meme-machine-background-track',
   backgroundAudioData: 'meme-machine-background-audio-data',
   backgroundAudioName: 'meme-machine-background-audio-name',
+  collapsedPreviews: 'meme-machine-collapsed-previews',
   settings: 'meme-machine-settings'
 };
 
@@ -108,7 +110,11 @@ function renderCurrentMode() {
 
 // Render Edit Mode
 function renderEditMode() {
-  const clipsHTML = clips.map((clip, index) => `
+  const clipsHTML = clips.map((clip, index) => {
+    const hasValidUrl = clip.url && extractYouTubeVideoId(clip.url);
+    const isCollapsed = collapsedPreviews[index] || false;
+    
+    return `
     <div class="clip-row">
       <div class="clip-main">
         <div class="key-button ${isListeningForKey && listeningClipIndex === index ? 'listening' : ''}" 
@@ -118,9 +124,16 @@ function renderEditMode() {
         <input type="text" class="clip-url" placeholder="YouTube URL" value="${clip.url}" data-clip-index="${index}">
         <input type="text" class="timestamp" placeholder="0:00" value="${clip.timestamp}" data-clip-index="${index}">
         <button class="remove-clip-btn" data-clip-index="${index}" title="Remove this clip">×</button>
+        ${hasValidUrl ? `
+          <button class="toggle-preview-btn ${isCollapsed ? 'collapsed' : ''}" 
+                  data-clip-index="${index}" 
+                  title="${isCollapsed ? 'Show' : 'Hide'} preview">
+            ${isCollapsed ? '▼' : '▲'}
+          </button>
+        ` : ''}
       </div>
-      ${clip.url && extractYouTubeVideoId(clip.url) ? `
-        <div class="clip-preview" id="preview-container-${index}">
+      ${hasValidUrl ? `
+        <div class="clip-preview ${isCollapsed ? 'collapsed' : ''}" id="preview-container-${index}">
           <div class="preview-player">
             <div id="preview-player-${index}"></div>
           </div>
@@ -131,7 +144,7 @@ function renderEditMode() {
         </div>
       ` : ''}
     </div>
-  `).join('');
+  `}).join('');
 
   return `
     <div class="edit-mode">
@@ -152,7 +165,7 @@ function renderEditMode() {
       <div class="instructions-edit">
         ${isListeningForKey ? 
           '<div class="listening-message">Press any letter key to map it...</div>' : 
-          '<div class="mapping-instructions">Click on a key button to map it to a different key<br/>Add YouTube URLs to see video previews</div>'
+          '<div class="mapping-instructions">Click on a key button to map it to a different key<br/>Add YouTube URLs to see video previews<br/>Use ▲/▼ to hide/show previews</div>'
         }
       </div>
       
@@ -526,6 +539,7 @@ function setupEditModeListeners() {
   const keyButtons = document.querySelectorAll('.key-button');
   const removeButtons = document.querySelectorAll('.remove-clip-btn');
   const setTimestampButtons = document.querySelectorAll('.set-timestamp-btn');
+  const togglePreviewButtons = document.querySelectorAll('.toggle-preview-btn');
   
   // Play button
   if (playBtn) {
@@ -565,14 +579,37 @@ function setupEditModeListeners() {
       const clipIndex = parseInt(e.target.dataset.clipIndex);
       if (clipIndex >= 0 && clips.length > 1) { // Keep at least one clip
         clips.splice(clipIndex, 1);
+        // Also remove collapsed state for this clip and shift others
+        const newCollapsedPreviews = {};
+        Object.keys(collapsedPreviews).forEach(key => {
+          const idx = parseInt(key);
+          if (idx < clipIndex) {
+            newCollapsedPreviews[idx] = collapsedPreviews[idx];
+          } else if (idx > clipIndex) {
+            newCollapsedPreviews[idx - 1] = collapsedPreviews[idx];
+          }
+        });
+        collapsedPreviews = newCollapsedPreviews;
+        
         validateUniqueKeys(); // Clean up after removal
         saveToStorage(); // Auto-save when removing clips
         renderCurrentMode();
       } else if (clips.length === 1) {
         // Reset the single clip instead of removing it
         clips[0] = { key: 'A', url: '', timestamp: '' };
+        collapsedPreviews = {}; // Reset collapsed states
         saveToStorage(); // Auto-save when resetting clip
         renderCurrentMode();
+      }
+    });
+  });
+  
+  // Toggle preview buttons
+  togglePreviewButtons.forEach(button => {
+    button.addEventListener('click', (e) => {
+      const clipIndex = parseInt(e.target.dataset.clipIndex);
+      if (clipIndex >= 0) {
+        togglePreviewCollapse(clipIndex);
       }
     });
   });
@@ -977,6 +1014,9 @@ function saveToStorage() {
     // Save clips data
     localStorage.setItem(STORAGE_KEYS.clips, JSON.stringify(clips));
     
+    // Save collapsed previews state
+    localStorage.setItem(STORAGE_KEYS.collapsedPreviews, JSON.stringify(collapsedPreviews));
+    
     // Save background track name/URL
     localStorage.setItem(STORAGE_KEYS.backgroundTrack, backgroundTrack);
     
@@ -1038,6 +1078,12 @@ function loadFromStorage() {
       }
     }
     
+    // Load collapsed previews state
+    const savedCollapsedPreviews = localStorage.getItem(STORAGE_KEYS.collapsedPreviews);
+    if (savedCollapsedPreviews) {
+      collapsedPreviews = JSON.parse(savedCollapsedPreviews);
+    }
+    
     // Load background track
     const savedBackgroundTrack = localStorage.getItem(STORAGE_KEYS.backgroundTrack);
     if (savedBackgroundTrack) {
@@ -1091,6 +1137,7 @@ function loadFromStorage() {
     clips = [{ key: 'A', url: '', timestamp: '' }];
     backgroundTrack = '';
     backgroundAudioFile = null;
+    collapsedPreviews = {};
   }
 }
 
@@ -1279,6 +1326,19 @@ function setTimestampFromPreview(clipIndex) {
       console.error('Failed to set timestamp:', error);
     }
   }
+}
+
+// Toggle preview collapse state
+function togglePreviewCollapse(clipIndex) {
+  collapsedPreviews[clipIndex] = !collapsedPreviews[clipIndex];
+  
+  // Save collapsed state
+  saveToStorage();
+  
+  // Re-render to update UI
+  renderCurrentMode();
+  
+  console.log(`Preview ${clipIndex} ${collapsedPreviews[clipIndex] ? 'collapsed' : 'expanded'}`);
 }
 
 // Start the app

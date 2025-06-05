@@ -595,12 +595,25 @@ input:focus {
   border-radius: 8px;
   background: #f9fafb;
   overflow: hidden;
-  transition: all 0.3s ease;
+  transition: all 0.4s ease;
+  opacity: 1;
+  max-height: 1000px; /* Large enough to accommodate any video */
+}
+
+.clip-preview.collapsed {
+  opacity: 0;
+  max-height: 0;
+  margin-top: 0;
+  border-width: 0;
+  padding: 0;
+  transform: scaleY(0);
+  transform-origin: top;
 }
 
 .preview-player {
   width: 100%;
   background: #000;
+  transition: all 0.3s ease;
 }
 
 .preview-controls {
@@ -610,6 +623,7 @@ input:focus {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  transition: all 0.3s ease;
 }
 
 .set-timestamp-btn {
@@ -711,6 +725,12 @@ input:focus {
     right: 10px;
   }
   
+  .toggle-preview-btn {
+    order: 4;
+    align-self: center;
+    margin-top: 0.5rem;
+  }
+  
   .preview-controls {
     flex-direction: column;
     gap: 0.5rem;
@@ -794,4 +814,61 @@ input:focus {
   button {
     background-color: #f9f9f9;
   }
+}
+
+.remove-clip-btn {
+  width: 30px;
+  height: 30px;
+  min-width: 30px;
+  padding: 0;
+  border-radius: 50%;
+  background-color: #ef4444;
+  color: white;
+  border-color: #ef4444;
+  font-size: 1rem;
+  font-weight: bold;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.remove-clip-btn:hover {
+  background-color: #dc2626;
+  border-color: #dc2626;
+  color: white;
+}
+
+.toggle-preview-btn {
+  width: 35px;
+  height: 30px;
+  min-width: 35px;
+  padding: 0;
+  border-radius: 6px;
+  background: linear-gradient(145deg, #6b7280, #4b5563);
+  color: white;
+  border: 1px solid #4b5563;
+  font-size: 0.875rem;
+  font-weight: bold;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.toggle-preview-btn:hover {
+  background: linear-gradient(145deg, #4b5563, #374151);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+}
+
+.toggle-preview-btn.collapsed {
+  background: linear-gradient(145deg, #10b981, #059669);
+  border-color: #059669;
+}
+
+.toggle-preview-btn.collapsed:hover {
+  background: linear-gradient(145deg, #059669, #047857);
 }
