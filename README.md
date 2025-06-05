@@ -8,6 +8,8 @@ Transform any YouTube video into a playable instrument! Map video clips to keys,
 
 ## 🚀 Quick Start
 
+![CleanShot 2025-06-05 at 20 54 42](https://github.com/user-attachments/assets/2373d61d-08a0-46f1-b05f-99a2ace98761)
+
 ### 1. **Set Up Your Clips** (Edit Mode)
 1. Click any key button to assign it
 2. Press a letter key (A-Z) to map it
@@ -20,6 +22,8 @@ Transform any YouTube video into a playable instrument! Map video clips to keys,
 1. Click "Upload" next to the background track field
 2. Select an audio file (MP3, WAV, etc.)
 3. Your music will loop in the background during performance
+
+![CleanShot 2025-06-05 at 20 54 59](https://github.com/user-attachments/assets/d9a81688-7461-4bd4-8506-375090742386)
 
 ### 3. **Perform** (Play Mode)
 1. Click "Play" to enter performance mode
