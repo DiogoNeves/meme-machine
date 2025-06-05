@@ -167,11 +167,28 @@ input:focus {
 
 .clip-row {
   display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin-bottom: 2rem;
+  padding: 1.5rem;
+  border: 2px solid #e5e7eb;
+  border-radius: 12px;
+  background: linear-gradient(145deg, #ffffff, #f9fafb);
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+  position: relative;
+  transition: all 0.3s ease;
+}
+
+.clip-row:hover {
+  border-color: #3b82f6;
+  box-shadow: 0 8px 25px rgba(59, 130, 246, 0.15);
+}
+
+.clip-main {
+  display: flex;
   gap: 1rem;
   align-items: center;
-  margin-bottom: 1.5rem;
   justify-content: center;
-  position: relative;
 }
 
 .key-button {
@@ -216,7 +233,7 @@ input:focus {
   max-width: 300px;
 }
 
-.timestamp, .duration {
+.timestamp {
   width: 120px;
 }
 
@@ -255,12 +272,27 @@ input:focus {
   text-align: center;
   margin: 2rem 0;
   font-size: 1rem;
+  padding: 1rem;
+  background: rgba(59, 130, 246, 0.05);
+  border-radius: 8px;
+  border: 1px solid rgba(59, 130, 246, 0.1);
+}
+
+.instructions-edit .mapping-instructions {
+  line-height: 1.6;
 }
 
 .listening-message {
   color: #3b82f6;
   font-weight: 500;
   animation: fadeIn 0.3s ease-in;
+}
+
+.timestamp-info {
+  color: #666;
+  font-size: 0.6rem;
+  margin-top: 2px;
+  font-family: 'Courier New', monospace;
 }
 
 .mapping-instructions {
@@ -439,28 +471,8 @@ input:focus {
   max-width: 40px;
 }
 
-.progress-ring {
-  position: absolute;
-  top: -25px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 20px;
-  height: 20px;
-  border: 2px solid #e5e7eb;
-  border-radius: 50%;
-  overflow: hidden;
-}
-
-.progress-fill {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background: conic-gradient(#10b981 0deg, transparent 0deg);
-  border-radius: 50%;
-  transition: transform 0.1s ease;
-  transform-origin: center;
+.progress-ring, .progress-fill {
+  display: none;
 }
 
 /* Enhanced Controls Section */
@@ -576,8 +588,79 @@ input:focus {
   color: #3b82f6;
 }
 
+/* Video Preview Styles */
+.clip-preview {
+  margin-top: 1rem;
+  border: 2px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f9fafb;
+  overflow: hidden;
+  transition: all 0.3s ease;
+}
+
+.preview-player {
+  width: 100%;
+  background: #000;
+}
+
+.preview-controls {
+  padding: 0.75rem 1rem;
+  background: linear-gradient(90deg, #f8fafc, #f1f5f9);
+  border-top: 1px solid #e5e7eb;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.set-timestamp-btn {
+  background: linear-gradient(145deg, #3b82f6, #2563eb);
+  color: white;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 4px rgba(59, 130, 246, 0.3);
+}
+
+.set-timestamp-btn:hover {
+  background: linear-gradient(145deg, #2563eb, #1d4ed8);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(59, 130, 246, 0.4);
+}
+
+.set-timestamp-btn:active {
+  transform: translateY(0);
+  box-shadow: 0 2px 4px rgba(59, 130, 246, 0.3);
+}
+
+.current-time {
+  font-family: 'Courier New', monospace;
+  font-size: 0.875rem;
+  font-weight: bold;
+  color: #374151;
+  background: #ffffff;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  border: 1px solid #d1d5db;
+  min-width: 50px;
+  text-align: center;
+}
+
 /* Enhanced Responsive Design */
 @media (max-width: 1024px) {
+  .clip-row {
+    padding: 1rem;
+    margin-bottom: 1.5rem;
+  }
+  
+  .clip-main {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+  
   .virtual-keyboard {
     padding: 1rem;
     margin: 1.5rem 0;
@@ -601,31 +684,45 @@ input:focus {
 }
 
 @media (max-width: 768px) {
-  .clip-row {
-    flex-wrap: wrap;
-    gap: 0.5rem;
+  .clip-main {
+    flex-direction: column;
+    align-items: stretch;
   }
   
   .clip-url {
-    min-width: 100%;
     order: 1;
+    width: 100%;
   }
   
   .key-button {
     order: 0;
+    align-self: center;
   }
   
-  .timestamp, .duration {
+  .timestamp {
     order: 2;
-    flex: 1;
-    min-width: 100px;
+    width: 100%;
   }
   
   .remove-clip-btn {
     order: 3;
     position: absolute;
-    top: -10px;
-    right: -10px;
+    top: 10px;
+    right: 10px;
+  }
+  
+  .preview-controls {
+    flex-direction: column;
+    gap: 0.5rem;
+    align-items: stretch;
+  }
+  
+  .set-timestamp-btn {
+    width: 100%;
+  }
+  
+  .current-time {
+    align-self: center;
   }
   
   .virtual-keyboard {
@@ -667,6 +764,10 @@ input:focus {
   
   .video-canvas {
     height: 250px;
+  }
+  
+  .clip-row {
+    padding: 0.75rem;
   }
   
   .virtual-key {

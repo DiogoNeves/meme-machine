@@ -3,7 +3,7 @@ import './style.css'
 // Application state
 let currentMode = 'edit'; // 'edit' or 'play'
 let clips = [
-  { key: 'A', url: '', timestamp: '', duration: '' }
+  { key: 'A', url: '', timestamp: '' }
 ];
 let backgroundTrack = '';
 let backgroundAudioFile = null; // Store the actual audio file
@@ -13,6 +13,7 @@ let listeningClipIndex = -1;
 // Play mode state
 let backgroundAudioElement = null;
 let youtubePlayers = {}; // Store YouTube players by clip key
+let previewPlayers = {}; // Store preview players for edit mode
 let activeClips = {}; // Track which clips are currently playing
 let clipTimeouts = {}; // Store timeouts for clip duration limits
 let clipProgressIntervals = {}; // Store progress update intervals
@@ -82,10 +83,9 @@ function parseTimestamp(timestamp) {
   return parseFloat(timestamp) || 0;
 }
 
-// Parse duration to seconds
+// Parse duration to seconds (simplified since we don't use duration anymore)
 function parseDuration(duration) {
-  if (!duration) return 5; // Default 5 seconds
-  return parseFloat(duration) || 5;
+  return 5; // Default 5 seconds for backward compatibility
 }
 
 // Render the current mode
@@ -94,6 +94,7 @@ function renderCurrentMode() {
   
   if (currentMode === 'edit') {
     app.innerHTML = renderEditMode();
+    setupEditMode(); // Setup preview players after rendering
   } else {
     app.innerHTML = renderPlayMode();
     if (currentMode === 'play') {
@@ -109,14 +110,26 @@ function renderCurrentMode() {
 function renderEditMode() {
   const clipsHTML = clips.map((clip, index) => `
     <div class="clip-row">
-      <div class="key-button ${isListeningForKey && listeningClipIndex === index ? 'listening' : ''}" 
-           data-clip-index="${index}">
-        ${clip.key || '?'}
+      <div class="clip-main">
+        <div class="key-button ${isListeningForKey && listeningClipIndex === index ? 'listening' : ''}" 
+             data-clip-index="${index}">
+          ${clip.key || '?'}
+        </div>
+        <input type="text" class="clip-url" placeholder="YouTube URL" value="${clip.url}" data-clip-index="${index}">
+        <input type="text" class="timestamp" placeholder="0:00" value="${clip.timestamp}" data-clip-index="${index}">
+        <button class="remove-clip-btn" data-clip-index="${index}" title="Remove this clip">×</button>
       </div>
-      <input type="text" class="clip-url" placeholder="Clip URL" value="${clip.url}" data-clip-index="${index}">
-      <input type="text" class="timestamp" placeholder="0:00" value="${clip.timestamp}" data-clip-index="${index}">
-      <input type="text" class="duration" placeholder="2.5s" value="${clip.duration}" data-clip-index="${index}">
-      <button class="remove-clip-btn" data-clip-index="${index}" title="Remove this clip">×</button>
+      ${clip.url && extractYouTubeVideoId(clip.url) ? `
+        <div class="clip-preview" id="preview-container-${index}">
+          <div class="preview-player">
+            <div id="preview-player-${index}"></div>
+          </div>
+          <div class="preview-controls">
+            <button class="set-timestamp-btn" data-clip-index="${index}">Set Current Time</button>
+            <span class="current-time" id="current-time-${index}">0:00</span>
+          </div>
+        </div>
+      ` : ''}
     </div>
   `).join('');
 
@@ -139,7 +152,7 @@ function renderEditMode() {
       <div class="instructions-edit">
         ${isListeningForKey ? 
           '<div class="listening-message">Press any letter key to map it...</div>' : 
-          '<div class="mapping-instructions">Click on a key button to map it to a different key</div>'
+          '<div class="mapping-instructions">Click on a key button to map it to a different key<br/>Add YouTube URLs to see video previews</div>'
         }
       </div>
       
@@ -225,9 +238,7 @@ function generateVirtualKeyboard(mappedClips) {
             ${isMapped ? `
               <div class="key-info">
                 <div class="clip-name">${getClipName(clip.url)}</div>
-                <div class="progress-ring">
-                  <div class="progress-fill"></div>
-                </div>
+                <div class="timestamp-info">${clip.timestamp || '0:00'}</div>
               </div>
             ` : ''}
           </div>
@@ -346,7 +357,7 @@ function updateBackgroundStatus(status) {
   }
 }
 
-// Play a clip
+// Play a clip (simplified without duration)
 function playClip(key) {
   const clip = clips.find(c => c.key === key && c.url);
   if (!clip || activeClips[key]) return;
@@ -355,7 +366,6 @@ function playClip(key) {
   if (!player) return;
   
   const startTime = parseTimestamp(clip.timestamp);
-  const duration = parseDuration(clip.duration);
   
   // Show and play the video
   const playerDiv = document.getElementById(`player-${key}`);
@@ -380,18 +390,10 @@ function playClip(key) {
     // Update virtual keyboard
     updateVirtualKey(key, true);
     
-    // Start progress indicator
-    startProgressIndicator(key, duration);
-    
-    // Set timeout for duration limit
-    clipTimeouts[key] = setTimeout(() => {
-      stopClip(key);
-    }, duration * 1000);
-    
     // Update stats
     updateKeysPressed();
     
-    console.log(`Playing clip ${key} from ${startTime}s for ${duration}s`);
+    console.log(`Playing clip ${key} from ${startTime}s`);
   }
 }
 
@@ -523,6 +525,7 @@ function setupEditModeListeners() {
   const clearAudioBtn = document.querySelector('.clear-audio-btn');
   const keyButtons = document.querySelectorAll('.key-button');
   const removeButtons = document.querySelectorAll('.remove-clip-btn');
+  const setTimestampButtons = document.querySelectorAll('.set-timestamp-btn');
   
   // Play button
   if (playBtn) {
@@ -550,7 +553,7 @@ function setupEditModeListeners() {
         }
       }
       
-      clips.push({ key: nextKey, url: '', timestamp: '', duration: '' });
+      clips.push({ key: nextKey, url: '', timestamp: '' });
       saveToStorage(); // Auto-save when adding clips
       renderCurrentMode();
     });
@@ -567,9 +570,19 @@ function setupEditModeListeners() {
         renderCurrentMode();
       } else if (clips.length === 1) {
         // Reset the single clip instead of removing it
-        clips[0] = { key: 'A', url: '', timestamp: '', duration: '' };
+        clips[0] = { key: 'A', url: '', timestamp: '' };
         saveToStorage(); // Auto-save when resetting clip
         renderCurrentMode();
+      }
+    });
+  });
+  
+  // Set timestamp buttons
+  setTimestampButtons.forEach(button => {
+    button.addEventListener('click', (e) => {
+      const clipIndex = parseInt(e.target.dataset.clipIndex);
+      if (clipIndex >= 0) {
+        setTimestampFromPreview(clipIndex);
       }
     });
   });
@@ -622,19 +635,24 @@ function setupEditModeListeners() {
   });
   
   // Clip input fields
-  const clipInputs = document.querySelectorAll('.clip-url, .timestamp, .duration');
+  const clipInputs = document.querySelectorAll('.clip-url, .timestamp');
   clipInputs.forEach(input => {
     input.addEventListener('input', (e) => {
       const clipIndex = parseInt(e.target.dataset.clipIndex);
-      const fieldType = e.target.classList.contains('clip-url') ? 'url' :
-                       e.target.classList.contains('timestamp') ? 'timestamp' : 'duration';
+      const fieldType = e.target.classList.contains('clip-url') ? 'url' : 'timestamp';
       
       if (clips[clipIndex]) {
         clips[clipIndex][fieldType] = e.target.value;
         
-        // Validate YouTube URL
-        if (fieldType === 'url' && e.target.value) {
-          validateYouTubeUrl(e.target.value, e.target);
+        // Validate YouTube URL and setup preview
+        if (fieldType === 'url') {
+          if (e.target.value) {
+            validateYouTubeUrl(e.target.value, e.target);
+          }
+          // Re-render to show/hide preview players
+          setTimeout(() => {
+            renderCurrentMode();
+          }, 100);
         }
         
         // Update play button state
@@ -1003,7 +1021,7 @@ function saveToStorage() {
   }
 }
 
-// Load data from localStorage
+// Load data from localStorage (updated to handle missing duration)
 function loadFromStorage() {
   try {
     // Load clips data
@@ -1011,7 +1029,12 @@ function loadFromStorage() {
     if (savedClips) {
       const parsedClips = JSON.parse(savedClips);
       if (Array.isArray(parsedClips) && parsedClips.length > 0) {
-        clips = parsedClips;
+        // Remove duration field from old saved data
+        clips = parsedClips.map(clip => ({
+          key: clip.key || '',
+          url: clip.url || '',
+          timestamp: clip.timestamp || ''
+        }));
       }
     }
     
@@ -1065,7 +1088,7 @@ function loadFromStorage() {
   } catch (error) {
     console.error('Failed to load from localStorage:', error);
     // Reset to defaults if loading fails
-    clips = [{ key: 'A', url: '', timestamp: '', duration: '' }];
+    clips = [{ key: 'A', url: '', timestamp: '' }];
     backgroundTrack = '';
     backgroundAudioFile = null;
   }
@@ -1130,6 +1153,133 @@ window.memeMachineStorage = {
     return data;
   }
 };
+
+// Setup Edit Mode
+function setupEditMode() {
+  setTimeout(() => {
+    setupPreviewPlayers();
+  }, 100); // Small delay to ensure DOM is ready
+}
+
+// Setup preview players for edit mode
+function setupPreviewPlayers() {
+  if (!isYouTubeAPIReady) {
+    console.log('YouTube API not ready for previews yet');
+    return;
+  }
+  
+  // Clear existing preview players
+  Object.values(previewPlayers).forEach(player => {
+    if (player && player.destroy) {
+      player.destroy();
+    }
+  });
+  previewPlayers = {};
+  
+  // Create preview players for clips with URLs
+  clips.forEach((clip, index) => {
+    if (clip.url) {
+      const videoId = extractYouTubeVideoId(clip.url);
+      if (videoId) {
+        createPreviewPlayer(index, videoId);
+      }
+    }
+  });
+}
+
+// Create a preview player for edit mode
+function createPreviewPlayer(clipIndex, videoId) {
+  const playerContainer = document.getElementById(`preview-player-${clipIndex}`);
+  if (!playerContainer) return;
+  
+  const player = new YT.Player(`preview-player-${clipIndex}`, {
+    height: '200',
+    width: '100%',
+    videoId: videoId,
+    playerVars: {
+      autoplay: 0,
+      controls: 1,
+      disablekb: 0,
+      fs: 0,
+      modestbranding: 1,
+      rel: 0,
+      start: parseTimestamp(clips[clipIndex].timestamp) || 0
+    },
+    events: {
+      onReady: (event) => {
+        console.log(`Preview player ready for clip ${clipIndex}`);
+        startTimeUpdater(clipIndex, player);
+      },
+      onStateChange: (event) => {
+        // Update timestamp display when user seeks
+        if (event.data === YT.PlayerState.PLAYING || event.data === YT.PlayerState.PAUSED) {
+          updateCurrentTimeDisplay(clipIndex, player);
+        }
+      }
+    }
+  });
+  
+  previewPlayers[clipIndex] = player;
+}
+
+// Start time updater for preview player
+function startTimeUpdater(clipIndex, player) {
+  const updateTime = () => {
+    if (player && player.getCurrentTime) {
+      updateCurrentTimeDisplay(clipIndex, player);
+    }
+  };
+  
+  // Update every 500ms
+  setInterval(updateTime, 500);
+}
+
+// Update current time display
+function updateCurrentTimeDisplay(clipIndex, player) {
+  try {
+    const currentTime = player.getCurrentTime();
+    const timeElement = document.getElementById(`current-time-${clipIndex}`);
+    if (timeElement && currentTime !== undefined) {
+      timeElement.textContent = formatTime(currentTime);
+    }
+  } catch (error) {
+    // Ignore errors when player is not ready
+  }
+}
+
+// Format seconds to MM:SS
+function formatTime(seconds) {
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
+}
+
+// Set timestamp from preview player
+function setTimestampFromPreview(clipIndex) {
+  const player = previewPlayers[clipIndex];
+  if (player && player.getCurrentTime) {
+    try {
+      const currentTime = player.getCurrentTime();
+      const formattedTime = formatTime(currentTime);
+      
+      // Update the clip data
+      clips[clipIndex].timestamp = formattedTime;
+      
+      // Update the input field
+      const timestampInput = document.querySelector(`.timestamp[data-clip-index="${clipIndex}"]`);
+      if (timestampInput) {
+        timestampInput.value = formattedTime;
+      }
+      
+      // Save to storage
+      saveToStorage();
+      
+      console.log(`Timestamp set to ${formattedTime} for clip ${clipIndex}`);
+    } catch (error) {
+      console.error('Failed to set timestamp:', error);
+    }
+  }
+}
 
 // Start the app
 init();
