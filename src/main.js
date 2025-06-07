@@ -13,6 +13,7 @@ let collapsedPreviews = {}; // Track which previews are collapsed
 
 // Play mode state
 let backgroundAudioElement = null;
+let backgroundYouTubePlayer = null;
 let youtubePlayers = {}; // Store YouTube players by clip key
 let previewPlayers = {}; // Store preview players for edit mode
 let activeClips = {}; // Track which clips are currently playing
@@ -444,6 +445,18 @@ function setupPlayMode() {
 
 // Setup background audio
 function setupBackgroundAudio() {
+  // Clear any existing background audio
+  if (backgroundAudioElement) {
+    backgroundAudioElement.pause();
+    backgroundAudioElement = null;
+  }
+  
+  if (backgroundYouTubePlayer) {
+    backgroundYouTubePlayer.destroy();
+    backgroundYouTubePlayer = null;
+  }
+  
+  // Setup audio file background
   if (backgroundAudioFile && backgroundAudioFile.audioUrl) {
     backgroundAudioElement = new Audio(backgroundAudioFile.audioUrl);
     backgroundAudioElement.loop = true;
@@ -461,8 +474,74 @@ function setupBackgroundAudio() {
       updateBackgroundStatus('stopped');
     });
     
-    console.log('Background audio ready');
+    console.log('Background audio file ready');
   }
+  // Setup YouTube background audio
+  else if (backgroundTrack && extractYouTubeVideoId(backgroundTrack)) {
+    setupBackgroundYouTubePlayer();
+  }
+}
+
+// Setup background YouTube player
+function setupBackgroundYouTubePlayer() {
+  if (!isYouTubeAPIReady) {
+    console.log('YouTube API not ready for background player, retrying...');
+    // Retry after a short delay
+    setTimeout(setupBackgroundYouTubePlayer, 500);
+    return;
+  }
+  
+  const videoId = extractYouTubeVideoId(backgroundTrack);
+  if (!videoId) return;
+  
+  // Create hidden container for background player
+  let bgContainer = document.getElementById('background-youtube-player');
+  if (!bgContainer) {
+    bgContainer = document.createElement('div');
+    bgContainer.id = 'background-youtube-player';
+    bgContainer.style.cssText = 'position: absolute; top: -9999px; left: -9999px; width: 1px; height: 1px; opacity: 0; pointer-events: none;';
+    document.body.appendChild(bgContainer);
+  }
+  
+  // Create player div
+  const playerDiv = document.createElement('div');
+  playerDiv.id = 'bg-youtube-player';
+  bgContainer.innerHTML = '';
+  bgContainer.appendChild(playerDiv);
+  
+  backgroundYouTubePlayer = new YT.Player('bg-youtube-player', {
+    height: '1',
+    width: '1',
+    videoId: videoId,
+    playerVars: {
+      autoplay: 0,
+      controls: 0,
+      disablekb: 1,
+      fs: 0,
+      modestbranding: 1,
+      rel: 0,
+      loop: 1,
+      playlist: videoId // Required for loop to work
+    },
+    events: {
+      onReady: (event) => {
+        console.log('Background YouTube player ready');
+        // Set volume lower for background
+        event.target.setVolume(70);
+      },
+      onStateChange: (event) => {
+        if (event.data === YT.PlayerState.PLAYING) {
+          updateBackgroundStatus('playing');
+        } else if (event.data === YT.PlayerState.PAUSED) {
+          updateBackgroundStatus('paused');
+        } else if (event.data === YT.PlayerState.ENDED) {
+          updateBackgroundStatus('stopped');
+          // Auto-restart for loop
+          event.target.playVideo();
+        }
+      }
+    }
+  });
 }
 
 // Setup YouTube players
@@ -621,14 +700,28 @@ function stopClip(key) {
 
 // Toggle background audio
 function toggleBackgroundAudio() {
-  if (!backgroundAudioElement) return;
-  
-  if (backgroundAudioElement.paused) {
-    backgroundAudioElement.play().catch(e => {
-      console.error('Failed to play background audio:', e);
-    });
-  } else {
-    backgroundAudioElement.pause();
+  // Handle audio file background
+  if (backgroundAudioElement) {
+    if (backgroundAudioElement.paused) {
+      backgroundAudioElement.play().catch(e => {
+        console.error('Failed to play background audio:', e);
+      });
+    } else {
+      backgroundAudioElement.pause();
+    }
+  }
+  // Handle YouTube background
+  else if (backgroundYouTubePlayer) {
+    try {
+      const state = backgroundYouTubePlayer.getPlayerState();
+      if (state === YT.PlayerState.PLAYING) {
+        backgroundYouTubePlayer.pauseVideo();
+      } else {
+        backgroundYouTubePlayer.playVideo();
+      }
+    } catch (e) {
+      console.error('Failed to toggle background YouTube player:', e);
+    }
   }
 }
 
@@ -945,8 +1038,21 @@ function handleAudioFileUpload(file) {
 
 // Clear background audio
 function clearBackgroundAudio() {
+  // Clean up audio file
   if (backgroundAudioFile && backgroundAudioFile.audioUrl) {
     URL.revokeObjectURL(backgroundAudioFile.audioUrl);
+  }
+  
+  // Clean up YouTube player
+  if (backgroundYouTubePlayer) {
+    backgroundYouTubePlayer.destroy();
+    backgroundYouTubePlayer = null;
+  }
+  
+  // Clean up audio element
+  if (backgroundAudioElement) {
+    backgroundAudioElement.pause();
+    backgroundAudioElement = null;
   }
   
   backgroundAudioFile = null;
@@ -1033,6 +1139,9 @@ function setupPlayModeListeners() {
       Object.keys(activeClips).forEach(key => stopClip(key));
       if (backgroundAudioElement) {
         backgroundAudioElement.pause();
+      }
+      if (backgroundYouTubePlayer) {
+        backgroundYouTubePlayer.pauseVideo();
       }
       
       currentMode = 'edit';
