@@ -1481,23 +1481,7 @@ input::placeholder {
 }
 
 .background-status {
-  margin-bottom: 1rem;
-}
-
-.performance-stats {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.performance-stats > div {
-  padding: 0.5rem;
-  background: 
-    linear-gradient(145deg, rgba(0, 255, 0, 0.05), rgba(0, 255, 0, 0.02));
-  border: 1px solid rgba(0, 255, 0, 0.1);
-  border-radius: 0;
-  font-weight: 500;
-  font-family: 'Courier New', monospace;
+  margin-bottom: 0;
 }
 
 #bg-status {
@@ -1525,11 +1509,7 @@ input::placeholder {
   background-color: #6b7280;
 }
 
-#keys-pressed, #session-time {
-  font-weight: bold;
-  color: #00ff00;
-  text-shadow: 0 0 5px rgba(0, 255, 0, 0.5);
-}
+
 
 /* Video Preview Styles */
 .clip-preview {
@@ -1616,12 +1596,6 @@ input::placeholder {
   
   .playback-status {
     text-align: center;
-  }
-  
-  .performance-stats {
-    flex-direction: row;
-    gap: 1rem;
-    justify-content: center;
   }
 }
 
@@ -1725,11 +1699,7 @@ input::placeholder {
     font-size: 0.7rem;
   }
   
-  .performance-stats {
-    flex-direction: row;
-    justify-content: center;
-    gap: 1rem;
-  }
+
 }
 
 /* Help Modal Styles */

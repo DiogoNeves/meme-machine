@@ -384,10 +384,6 @@ function renderPlayMode() {
         
         <div class="playback-status">
           <div class="background-status">Background: <span id="bg-status">stopped</span></div>
-          <div class="performance-stats">
-            <div>Keys pressed: <span id="keys-pressed">0</span></div>
-            <div>Session: <span id="session-time">00:00</span></div>
-          </div>
         </div>
       </div>
       
@@ -496,7 +492,6 @@ function setupPlayMode() {
   setupBackgroundAudio();
   setupYouTubePlayers();
   setupAudioVisualization();
-  startSessionTimer();
 }
 
 // Setup background audio
@@ -700,9 +695,6 @@ function playClip(key) {
     
     // Update virtual keyboard
     updateVirtualKey(key, true);
-    
-    // Update stats
-    updateKeysPressed();
     
     console.log(`Playing clip ${key} from ${startTime}s`);
   }
@@ -1386,20 +1378,7 @@ function updateCanvasBorder(volume) {
   }
 }
 
-// Start session timer
-function startSessionTimer() {
-  const startTime = Date.now();
-  
-  setInterval(() => {
-    const elapsed = Math.floor((Date.now() - startTime) / 1000);
-    const minutes = Math.floor(elapsed / 60);
-    const seconds = elapsed % 60;
-    const timeElement = document.getElementById('session-time');
-    if (timeElement) {
-      timeElement.textContent = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-    }
-  }, 1000);
-}
+
 
 // Update virtual key visual state
 function updateVirtualKey(key, isActive) {
@@ -1442,14 +1421,7 @@ function startProgressIndicator(key, duration) {
   }, 50);
 }
 
-// Update keys pressed counter
-function updateKeysPressed() {
-  const counter = document.getElementById('keys-pressed');
-  if (counter) {
-    const current = parseInt(counter.textContent) || 0;
-    counter.textContent = (current + 1).toString();
-  }
-}
+
 
 // Save data to localStorage
 function saveToStorage() {
