@@ -9,7 +9,7 @@ let backgroundTrack = '';
 let backgroundAudioFile = null; // Store the actual audio file
 let isListeningForKey = false;
 let listeningClipIndex = -1;
-let collapsedPreviews = {}; // Track which previews are collapsed
+let currentEditingKey = null; // Track which key is currently being edited
 
 // Play mode state
 let backgroundAudioElement = null;
@@ -30,7 +30,6 @@ const STORAGE_KEYS = {
   backgroundTrack: 'meme-machine-background-track',
   backgroundAudioData: 'meme-machine-background-audio-data',
   backgroundAudioName: 'meme-machine-background-audio-name',
-  collapsedPreviews: 'meme-machine-collapsed-previews',
   settings: 'meme-machine-settings',
   firstVisit: 'meme-machine-first-visit'
 };
@@ -231,73 +230,106 @@ function renderCurrentMode() {
 
 // Render Edit Mode
 function renderEditMode() {
-  const clipsHTML = clips.map((clip, index) => {
-    const hasValidUrl = clip.url && extractYouTubeVideoId(clip.url);
-    const isCollapsed = collapsedPreviews[index] || false;
-    
-    return `
-    <div class="clip-row">
-      <div class="clip-main">
-        <div class="key-button ${isListeningForKey && listeningClipIndex === index ? 'listening' : ''}" 
-             data-clip-index="${index}">
-          ${clip.key || '?'}
-        </div>
-        <input type="text" class="clip-url" placeholder="YouTube URL" value="${clip.url}" data-clip-index="${index}">
-        <div class="timestamp-container">
-          <input type="text" class="timestamp" placeholder="${getLocalizedPlaceholder()}" value="${clip.timestamp}" data-clip-index="${index}">
-          <div class="timestamp-validation" id="timestamp-validation-${index}"></div>
-        </div>
-        <button class="remove-clip-btn" data-clip-index="${index}" title="Remove this clip">×</button>
-        ${hasValidUrl ? `
-          <button class="toggle-preview-btn ${isCollapsed ? 'collapsed' : ''}" 
-                  data-clip-index="${index}" 
-                  title="${isCollapsed ? 'Show' : 'Hide'} preview">
-            ${isCollapsed ? '▼' : '▲'}
-          </button>
-        ` : ''}
-      </div>
-      ${hasValidUrl ? `
-        <div class="clip-preview ${isCollapsed ? 'collapsed' : ''}" id="preview-container-${index}">
-          <div class="preview-player">
-            <div id="preview-player-${index}"></div>
-          </div>
-          <div class="preview-controls">
-            <button class="set-timestamp-btn" data-clip-index="${index}">Set Current Time</button>
-            <span class="current-time" id="current-time-${index}">0:00</span>
-          </div>
-        </div>
-      ` : ''}
-    </div>
-  `}).join('');
+  const mappedClips = clips.filter(clip => clip.key);
+  const currentClip = currentEditingKey ? clips.find(clip => clip.key === currentEditingKey) : null;
+  const currentClipIndex = currentClip ? clips.indexOf(currentClip) : -1;
+  
+  const virtualKeyboardHTML = generateVirtualKeyboardForEdit(clips);
 
   return `
     <div class="edit-mode">
       <h1>Meme Machine <span class="mode-subtitle">- Edit Mode</span></h1>
       
-      <div class="background-section">
-        <div class="background-label">Background Audio / Beat</div>
-        <div class="background-input-group">
-          <input type="text" class="background-track" placeholder="YouTube URL or upload audio file" value="${backgroundTrack}">
-          <button class="upload-btn" title="Upload audio file">📁</button>
-          <button class="help-btn" title="Show help and tutorial">?</button>
-          <input type="file" class="audio-file-input" accept="audio/*" style="display: none;">
-          ${backgroundAudioFile || backgroundTrack ? '<button class="clear-audio-btn" title="Clear background audio">×</button>' : ''}
+      <div class="edit-help-section">
+        <div class="edit-help-text">
+          ${currentEditingKey ? 
+            `Editing key <strong>${currentEditingKey}</strong> - Add a YouTube URL and set the timestamp for the clip` :
+            'Click any key on the keyboard below to start mapping it to a YouTube clip'
+          }
         </div>
       </div>
       
-      <div class="clips-section">
-        ${clipsHTML}
-        <button class="map-new-key-btn">Map new key</button>
+      <div class="edit-main-area">
+        <div class="edit-canvas">
+          ${currentEditingKey ? `
+            <div class="edit-controls">
+              <div class="key-display">
+                <div class="editing-key">${currentEditingKey}</div>
+                <button class="change-key-btn" title="Change key">Change Key</button>
+              </div>
+              
+              <div class="url-section">
+                <label>YouTube URL:</label>
+                <input type="text" class="clip-url" placeholder="https://youtube.com/watch?v=..." 
+                       value="${currentClip ? currentClip.url : ''}" 
+                       data-clip-index="${currentClipIndex}">
+              </div>
+              
+              <div class="time-controls-row">
+                <div class="timestamp-section">
+                  <label>Start Time:</label>
+                  <div class="timestamp-container">
+                    <input type="text" class="timestamp" 
+                           placeholder="${getLocalizedPlaceholder()}" 
+                           value="${currentClip ? currentClip.timestamp : ''}" 
+                           data-clip-index="${currentClipIndex}">
+                    <div class="timestamp-validation" id="timestamp-validation-${currentClipIndex}"></div>
+                  </div>
+                </div>
+                
+                ${currentClip && currentClip.url && extractYouTubeVideoId(currentClip.url) ? `
+                  <div class="preview-controls-edit">
+                    <button class="set-timestamp-btn" data-clip-index="${currentClipIndex}">Set Current Time</button>
+                    <span class="current-time" id="current-time-${currentClipIndex}">0:00</span>
+                  </div>
+                ` : ''}
+              </div>
+              
+              <div class="edit-actions">
+                ${currentClip && currentClip.url ? `
+                  <button class="unmap-key-btn" data-key="${currentEditingKey}">Unmap Key</button>
+                ` : ''}
+                <button class="done-editing-btn">Done</button>
+              </div>
+            </div>
+            
+            ${currentClip && currentClip.url && extractYouTubeVideoId(currentClip.url) ? `
+              <div class="preview-area">
+                <div id="edit-preview-player"></div>
+              </div>
+            ` : `
+              <div class="preview-placeholder">
+                ${currentClip && !currentClip.url ? 'Add a YouTube URL to see preview' : 'No preview available'}
+              </div>
+            `}
+          ` : `
+            <div class="no-key-selected">
+              <div class="select-key-message">
+                Select a key from the keyboard below to start mapping
+              </div>
+            </div>
+          `}
+        </div>
       </div>
       
-      <div class="instructions-edit">
-        ${isListeningForKey ? 
-          '<div class="listening-message">Press any letter key to map it...</div>' : 
-          '<div class="mapping-instructions">Click on a key button to map it to a different key<br/>Add YouTube URLs to see video previews<br/>Use ▲/▼ to hide/show previews<br/>Add background audio with YouTube URL or file upload</div>'
-        }
+      <div class="virtual-keyboard-edit">
+        ${virtualKeyboardHTML}
       </div>
       
-      <button class="play-mode-btn" ${clips.some(c => c.url && c.key) ? '' : 'disabled'}>Play</button>
+      <div class="edit-bottom-controls">
+        <div class="background-section-compact">
+          <label>Background:</label>
+          <input type="text" class="background-track" placeholder="YouTube URL or upload" value="${backgroundTrack}">
+          <button class="upload-btn" title="Upload audio file">📁</button>
+          ${backgroundAudioFile || backgroundTrack ? '<button class="clear-audio-btn" title="Clear">×</button>' : ''}
+          <input type="file" class="audio-file-input" accept="audio/*" style="display: none;">
+        </div>
+        
+        <div class="mode-controls">
+          <button class="help-btn" title="Show help">?</button>
+          <button class="play-mode-btn" ${clips.some(c => c.url && c.key) ? '' : 'disabled'}>Play Mode</button>
+        </div>
+      </div>
       
       <div class="creator-credits">
         <div class="credits-text">Created by <strong>Diogo Neves</strong></div>
@@ -419,6 +451,42 @@ function generateVirtualKeyboard(mappedClips) {
               </div>
             ` : ''}
   </div>
+        `;
+      }).join('')}
+    </div>`
+  ).join('');
+}
+
+// Generate virtual keyboard for edit mode
+function generateVirtualKeyboardForEdit(clips) {
+  const keyboardRows = [
+    ['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'],
+    ['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L'],
+    ['Z', 'X', 'C', 'V', 'B', 'N', 'M']
+  ];
+  
+  const mappedKeys = {};
+  clips.forEach(clip => {
+    if (clip.key) {
+      mappedKeys[clip.key] = clip;
+    }
+  });
+  
+  return keyboardRows.map(row => 
+    `<div class="keyboard-row">
+      ${row.map(key => {
+        const isMapped = key in mappedKeys;
+        const clip = mappedKeys[key];
+        const isCurrentlyEditing = key === currentEditingKey;
+        return `
+          <div class="virtual-key-edit ${isMapped ? 'mapped' : ''} ${isCurrentlyEditing ? 'editing' : ''}" data-key="${key}">
+            <span class="key-letter">${key}</span>
+            ${isMapped && clip.url ? `
+              <div class="key-info">
+                <div class="clip-indicator">●</div>
+              </div>
+            ` : ''}
+          </div>
         `;
       }).join('')}
     </div>`
@@ -761,7 +829,10 @@ function handleKeyMapping(e) {
     });
     
     // Map the key
-    clips[listeningClipIndex].key = key;
+    if (listeningClipIndex >= 0 && listeningClipIndex < clips.length) {
+      clips[listeningClipIndex].key = key;
+      currentEditingKey = key; // Update current editing key
+    }
     
     // Stop listening
     isListeningForKey = false;
@@ -787,16 +858,16 @@ function setupModeSpecificListeners() {
 // Setup Edit Mode event listeners
 function setupEditModeListeners() {
   const playBtn = document.querySelector('.play-mode-btn');
-  const mapNewKeyBtn = document.querySelector('.map-new-key-btn');
   const backgroundTrackInput = document.querySelector('.background-track');
   const uploadBtn = document.querySelector('.upload-btn');
   const helpBtn = document.querySelector('.help-btn');
   const audioFileInput = document.querySelector('.audio-file-input');
   const clearAudioBtn = document.querySelector('.clear-audio-btn');
-  const keyButtons = document.querySelectorAll('.key-button');
-  const removeButtons = document.querySelectorAll('.remove-clip-btn');
-  const setTimestampButtons = document.querySelectorAll('.set-timestamp-btn');
-  const togglePreviewButtons = document.querySelectorAll('.toggle-preview-btn');
+  const virtualKeys = document.querySelectorAll('.virtual-key-edit');
+  const changeKeyBtn = document.querySelector('.change-key-btn');
+  const doneEditingBtn = document.querySelector('.done-editing-btn');
+  const unmapKeyBtn = document.querySelector('.unmap-key-btn');
+  const setTimestampBtn = document.querySelector('.set-timestamp-btn');
   
   // Play button
   if (playBtn) {
@@ -804,84 +875,77 @@ function setupEditModeListeners() {
       validateUniqueKeys(); // Ensure no duplicates before playing
       if (clips.some(c => c.url && c.key)) {
         currentMode = 'play';
+        currentEditingKey = null; // Clear editing state
         saveToStorage(); // Save current state before switching modes
         renderCurrentMode();
       }
     });
   }
   
-  // Map new key button
-  if (mapNewKeyBtn) {
-    mapNewKeyBtn.addEventListener('click', () => {
-      // Find next available key
-      const usedKeys = new Set(clips.map(c => c.key).filter(k => k));
-      let nextKey = 'A';
-      for (let i = 0; i < 26; i++) {
-        const testKey = String.fromCharCode(65 + i);
-        if (!usedKeys.has(testKey)) {
-          nextKey = testKey;
-          break;
+  // Virtual keyboard keys
+  virtualKeys.forEach(key => {
+    key.addEventListener('click', (e) => {
+      const keyLetter = e.currentTarget.dataset.key;
+      if (keyLetter) {
+        // If this key already exists in clips, edit it; otherwise create new
+        let existingClip = clips.find(c => c.key === keyLetter);
+        if (!existingClip) {
+          existingClip = { key: keyLetter, url: '', timestamp: '' };
+          clips.push(existingClip);
         }
+        
+        currentEditingKey = keyLetter;
+        saveToStorage();
+        renderCurrentMode();
       }
-      
-      clips.push({ key: nextKey, url: '', timestamp: '' });
-      saveToStorage(); // Auto-save when adding clips
+    });
+  });
+  
+  // Change key button
+  if (changeKeyBtn) {
+    changeKeyBtn.addEventListener('click', () => {
+      isListeningForKey = true;
+      // Store the current editing key as the one to remap
+      listeningClipIndex = clips.findIndex(c => c.key === currentEditingKey);
       renderCurrentMode();
     });
   }
   
-  // Remove clip buttons
-  removeButtons.forEach(button => {
-    button.addEventListener('click', (e) => {
-      const clipIndex = parseInt(e.target.dataset.clipIndex);
-      if (clipIndex >= 0 && clips.length > 1) { // Keep at least one clip
-        clips.splice(clipIndex, 1);
-        // Also remove collapsed state for this clip and shift others
-        const newCollapsedPreviews = {};
-        Object.keys(collapsedPreviews).forEach(key => {
-          const idx = parseInt(key);
-          if (idx < clipIndex) {
-            newCollapsedPreviews[idx] = collapsedPreviews[idx];
-          } else if (idx > clipIndex) {
-            newCollapsedPreviews[idx - 1] = collapsedPreviews[idx];
-          }
-        });
-        collapsedPreviews = newCollapsedPreviews;
-        
-        validateUniqueKeys(); // Clean up after removal
-        saveToStorage(); // Auto-save when removing clips
-        renderCurrentMode();
-      } else if (clips.length === 1) {
-        // Reset the single clip instead of removing it
-        clips[0] = { key: 'A', url: '', timestamp: '' };
-        collapsedPreviews = {}; // Reset collapsed states
-        saveToStorage(); // Auto-save when resetting clip
-        renderCurrentMode();
+  // Done editing button
+  if (doneEditingBtn) {
+    doneEditingBtn.addEventListener('click', () => {
+      currentEditingKey = null;
+      renderCurrentMode();
+    });
+  }
+  
+  // Unmap key button
+  if (unmapKeyBtn) {
+    unmapKeyBtn.addEventListener('click', (e) => {
+      const key = e.target.dataset.key;
+      if (key) {
+        const clipIndex = clips.findIndex(c => c.key === key);
+        if (clipIndex !== -1) {
+          clips.splice(clipIndex, 1);
+          currentEditingKey = null;
+          saveToStorage();
+          renderCurrentMode();
+        }
       }
     });
-  });
+  }
   
-  // Toggle preview buttons
-  togglePreviewButtons.forEach(button => {
-    button.addEventListener('click', (e) => {
+  // Set timestamp button
+  if (setTimestampBtn) {
+    setTimestampBtn.addEventListener('click', (e) => {
       const clipIndex = parseInt(e.target.dataset.clipIndex);
-      if (clipIndex >= 0) {
-        togglePreviewCollapse(clipIndex);
+      if (clipIndex >= 0 && previewPlayers.edit) {
+        setTimestampFromEditPreview(clipIndex);
       }
     });
-  });
+  }
   
-  // Set timestamp buttons
-  setTimestampButtons.forEach(button => {
-    button.addEventListener('click', (e) => {
-      const clipIndex = parseInt(e.target.dataset.clipIndex);
-      if (clipIndex >= 0) {
-        setTimestampFromPreview(clipIndex);
-      }
-    });
-  });
-  
-  // Background track input (supports YouTube URLs)
+  // Background track input
   if (backgroundTrackInput) {
     backgroundTrackInput.addEventListener('input', (e) => {
       backgroundTrack = e.target.value;
@@ -908,7 +972,7 @@ function setupEditModeListeners() {
     });
   }
   
-    // Upload button
+  // Upload button
   if (uploadBtn) {
     uploadBtn.addEventListener('click', () => {
       audioFileInput.click();
@@ -939,56 +1003,62 @@ function setupEditModeListeners() {
     });
   }
   
-  // Key buttons for mapping
-  keyButtons.forEach(button => {
-    button.addEventListener('click', (e) => {
-      const clipIndex = parseInt(e.target.dataset.clipIndex);
-      if (clipIndex >= 0) {
-        // Start listening for key mapping
-        isListeningForKey = true;
-        listeningClipIndex = clipIndex;
-        renderCurrentMode();
-      }
-    });
-  });
-  
-  // Clip input fields
-  const clipInputs = document.querySelectorAll('.clip-url, .timestamp');
-  clipInputs.forEach(input => {
-    input.addEventListener('input', (e) => {
-      const clipIndex = parseInt(e.target.dataset.clipIndex);
-      const fieldType = e.target.classList.contains('clip-url') ? 'url' : 'timestamp';
-      
-      if (clips[clipIndex]) {
-        clips[clipIndex][fieldType] = e.target.value;
+  // Handle inputs for the current editing clip
+  if (currentEditingKey) {
+    const clipIndex = clips.findIndex(c => c.key === currentEditingKey);
+    
+    // URL input
+    const urlInput = document.querySelector('.clip-url');
+    if (urlInput && clipIndex !== -1) {
+      urlInput.addEventListener('input', (e) => {
+        clips[clipIndex].url = e.target.value;
         
-        // Validate YouTube URL and setup preview
-        if (fieldType === 'url') {
-          if (e.target.value) {
-            validateYouTubeUrl(e.target.value, e.target);
-          }
-          // Re-render to show/hide preview players
-          setTimeout(() => {
-            renderCurrentMode();
-          }, 100);
-        }
-        
-        // Validate timestamp and show feedback
-        if (fieldType === 'timestamp') {
-          validateTimestampInput(e.target.value, clipIndex);
+        // Validate YouTube URL
+        if (e.target.value) {
+          validateYouTubeUrl(e.target.value, e.target);
+        } else {
+          e.target.classList.remove('valid', 'invalid');
         }
         
         // Update play button state
         updatePlayButtonState();
         
-        // Auto-save on input changes (with debouncing)
+        // Auto-save with debouncing
         clearTimeout(window.saveTimeout);
         window.saveTimeout = setTimeout(() => {
           saveToStorage();
-        }, 1000); // Save after 1 second of no typing
-      }
-    });
-  });
+          // Re-render to update preview
+          renderCurrentMode();
+        }, 1000);
+      });
+    }
+    
+    // Timestamp input
+    const timestampInput = document.querySelector('.timestamp');
+    if (timestampInput && clipIndex !== -1) {
+      timestampInput.addEventListener('input', (e) => {
+        clips[clipIndex].timestamp = e.target.value;
+        
+        // Validate timestamp
+        validateTimestampInput(e.target.value, clipIndex);
+        
+        // Auto-save with debouncing
+        clearTimeout(window.saveTimeout);
+        window.saveTimeout = setTimeout(() => {
+          saveToStorage();
+        }, 1000);
+      });
+    }
+  }
+  
+  // Handle keyboard input for key mapping
+  if (isListeningForKey) {
+    // This will be handled by the global key handler
+    const editHelp = document.querySelector('.edit-help-text');
+    if (editHelp) {
+      editHelp.innerHTML = '<div class="listening-message">Press any letter key to map it...</div>';
+    }
+  }
 }
 
 // Handle audio file upload
@@ -1355,9 +1425,6 @@ function saveToStorage() {
     // Save clips data
     localStorage.setItem(STORAGE_KEYS.clips, JSON.stringify(clips));
     
-    // Save collapsed previews state
-    localStorage.setItem(STORAGE_KEYS.collapsedPreviews, JSON.stringify(collapsedPreviews));
-    
     // Save background track name/URL
     localStorage.setItem(STORAGE_KEYS.backgroundTrack, backgroundTrack);
     
@@ -1419,12 +1486,6 @@ function loadFromStorage() {
       }
     }
     
-    // Load collapsed previews state
-    const savedCollapsedPreviews = localStorage.getItem(STORAGE_KEYS.collapsedPreviews);
-    if (savedCollapsedPreviews) {
-      collapsedPreviews = JSON.parse(savedCollapsedPreviews);
-    }
-    
     // Load background track
     const savedBackgroundTrack = localStorage.getItem(STORAGE_KEYS.backgroundTrack);
     if (savedBackgroundTrack) {
@@ -1478,7 +1539,6 @@ function loadFromStorage() {
     clips = [{ key: 'A', url: '', timestamp: '' }];
     backgroundTrack = '';
     backgroundAudioFile = null;
-    collapsedPreviews = {};
   }
 }
 
@@ -1561,15 +1621,77 @@ window.testTimeParser = (timestamp) => {
 
 // Setup Edit Mode
 function setupEditMode() {
-  setTimeout(() => {
-    setupPreviewPlayers();
-    // Validate existing timestamps on load
-    clips.forEach((clip, index) => {
-      if (clip.timestamp) {
-        validateTimestampInput(clip.timestamp, index);
+  // Clear any preview players from previous mode
+  previewPlayers = {};
+  
+  // If there's a current editing key, setup the preview player
+  if (currentEditingKey) {
+    setupEditPreviewPlayer();
+  }
+}
+
+// Setup preview player for the current editing key
+function setupEditPreviewPlayer() {
+  if (!isYouTubeAPIReady || !currentEditingKey) return;
+  
+  const clip = clips.find(c => c.key === currentEditingKey);
+  if (!clip || !clip.url) return;
+  
+  const videoId = extractYouTubeVideoId(clip.url);
+  if (!videoId) return;
+  
+  const playerContainer = document.getElementById('edit-preview-player');
+  if (!playerContainer) return;
+  
+  // Clear existing player
+  if (previewPlayers.edit) {
+    previewPlayers.edit.destroy();
+    delete previewPlayers.edit;
+  }
+  
+  // Create new player
+  previewPlayers.edit = new YT.Player('edit-preview-player', {
+    height: '300',
+    width: '100%',
+    videoId: videoId,
+    playerVars: {
+      autoplay: 0,
+      controls: 1,
+      disablekb: 0,
+      fs: 1,
+      modestbranding: 1,
+      rel: 0,
+      start: parseTimestamp(clip.timestamp) || 0
+    },
+    events: {
+      onReady: (event) => {
+        console.log(`Edit preview player ready for key ${currentEditingKey}`);
+        // Start time updater
+        const clipIndex = clips.indexOf(clip);
+        startEditTimeUpdater(clipIndex, previewPlayers.edit);
+      },
+      onStateChange: (event) => {
+        // Update timestamp display when user seeks
+        if (event.data === YT.PlayerState.PLAYING || event.data === YT.PlayerState.PAUSED) {
+          const clipIndex = clips.indexOf(clip);
+          updateCurrentTimeDisplay(clipIndex, previewPlayers.edit);
+        }
       }
-    });
-  }, 100); // Small delay to ensure DOM is ready
+    }
+  });
+}
+
+// Start time updater for edit preview
+function startEditTimeUpdater(clipIndex, player) {
+  if (window.editTimeUpdaterInterval) {
+    clearInterval(window.editTimeUpdaterInterval);
+  }
+  
+  window.editTimeUpdaterInterval = setInterval(() => {
+    if (player && player.getCurrentTime) {
+      updateCurrentTimeDisplay(clipIndex, player);
+    }
+  }, 500);
 }
 
 // Setup preview players for edit mode
@@ -1692,18 +1814,36 @@ function setTimestampFromPreview(clipIndex) {
   }
 }
 
-// Toggle preview collapse state
-function togglePreviewCollapse(clipIndex) {
-  collapsedPreviews[clipIndex] = !collapsedPreviews[clipIndex];
-  
-  // Save collapsed state
-  saveToStorage();
-  
-  // Re-render to update UI
-  renderCurrentMode();
-  
-  console.log(`Preview ${clipIndex} ${collapsedPreviews[clipIndex] ? 'collapsed' : 'expanded'}`);
+// Set timestamp from edit preview player
+function setTimestampFromEditPreview(clipIndex) {
+  const player = previewPlayers.edit;
+  if (player && player.getCurrentTime && clipIndex >= 0) {
+    try {
+      const currentTime = player.getCurrentTime();
+      const formattedTime = formatTime(currentTime);
+      
+      // Update the clip data
+      clips[clipIndex].timestamp = formattedTime;
+      
+      // Update the input field
+      const timestampInput = document.querySelector('.timestamp');
+      if (timestampInput) {
+        timestampInput.value = formattedTime;
+        // Trigger validation
+        validateTimestampInput(formattedTime, clipIndex);
+      }
+      
+      // Save to storage
+      saveToStorage();
+      
+      console.log(`Timestamp set to ${formattedTime} for clip ${clipIndex}`);
+    } catch (error) {
+      console.error('Failed to set timestamp:', error);
+    }
+  }
 }
+
+
 
 // Check if this is the first visit and show help modal
 function checkFirstVisit() {
@@ -1746,27 +1886,29 @@ function createHelpModal() {
         </div>
         
         <div class="help-section">
-          <h3>🎬 Adding Video Clips</h3>
-          <p>1. Click on a key button (like <strong>A</strong>) to assign it to that letter</p>
-          <p>2. Paste a <strong>YouTube URL</strong> in the text field</p>
-          <p>3. Set a <strong>timestamp</strong> (like 1:30 or 90.5) to start from a specific moment</p>
-          <p>4. Use the ▲/▼ button to preview and fine-tune the timing</p>
+          <h3>🎬 Mapping Video Clips</h3>
+          <p>1. Click on any key on the <strong>virtual keyboard</strong> to select it</p>
+          <p>2. Add a <strong>YouTube URL</strong> in the main editor area</p>
+          <p>3. Set a <strong>timestamp</strong> to start from a specific moment</p>
+          <p>4. Use <strong>"Set Current Time"</strong> to capture the exact timestamp from the preview</p>
+          <p>5. Click <strong>"Done"</strong> when finished or select another key to edit</p>
         </div>
         
         <div class="help-section">
           <h3>🎮 Playing Your Memes</h3>
-          <p>1. Click <strong>"Play"</strong> to enter play mode</p>
+          <p>1. Click <strong>"Play Mode"</strong> to start performing</p>
           <p>2. Press any mapped key to play that video clip</p>
           <p>3. Press <strong>Space</strong> to start/stop background music</p>
-          <p>4. Have fun creating epic meme moments!</p>
+          <p>4. Release the key to stop the clip immediately</p>
         </div>
         
         <div class="help-section">
           <h3>💡 Pro Tips</h3>
           <p>• Use timestamps to skip intros: "0:15" or "15"</p>
-          <p>• Collapse previews with ▲ to save screen space</p>
+          <p>• Green dots on keys show mapped clips</p>
+          <p>• Click <strong>"Change Key"</strong> to remap to a different letter</p>
           <p>• Your settings are automatically saved</p>
-          <p>• Each key can have its own unique video clip</p>
+          <p>• Background audio can be a YouTube URL or uploaded file</p>
         </div>
         
         <div class="help-section">
