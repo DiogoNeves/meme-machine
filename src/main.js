@@ -353,11 +353,6 @@ function renderEditMode() {
 // Render Play Mode
 function renderPlayMode() {
   const mappedClips = clips.filter(clip => clip.key && clip.url);
-  
-  const mappedKeysHTML = mappedClips
-    .map(clip => `<div class="mapped-key" data-key="${clip.key}">${clip.key}</div>`)
-    .join('');
-
   const virtualKeyboardHTML = generateVirtualKeyboard(mappedClips);
 
   return `
@@ -383,23 +378,15 @@ function renderPlayMode() {
       </div>
       
       <div class="controls-section">
-        <div class="mapped-keys-section">
-          <span class="mapped-keys-label">Active Keys</span>
-          <div class="mapped-keys">
-            ${mappedKeysHTML || '<div class="no-keys">No keys mapped</div>'}
-          </div>
-        </div>
-        
         <div class="instructions">
-          <div>Press keys to play clip</div>
-          <div>Press space to start/stop music</div>
+          <div>Press keys to play clips • Space bar controls background music</div>
         </div>
         
         <div class="playback-status">
           <div class="background-status">Background: <span id="bg-status">stopped</span></div>
           <div class="performance-stats">
             <div>Keys pressed: <span id="keys-pressed">0</span></div>
-            <div>Session time: <span id="session-time">00:00</span></div>
+            <div>Session: <span id="session-time">00:00</span></div>
           </div>
         </div>
       </div>
@@ -1209,6 +1196,7 @@ function updatePlayButtonState() {
 // Setup Play Mode event listeners
 function setupPlayModeListeners() {
   const editBtn = document.querySelector('.edit-mode-btn');
+  const virtualKeys = document.querySelectorAll('.virtual-key');
   
   if (editBtn) {
     editBtn.addEventListener('click', () => {
@@ -1226,6 +1214,43 @@ function setupPlayModeListeners() {
       renderCurrentMode();
     });
   }
+  
+  // Add click listeners to virtual keys in play mode
+  virtualKeys.forEach(key => {
+    const keyLetter = key.dataset.key;
+    if (keyLetter) {
+      // Mouse down - start playing
+      key.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        const clip = clips.find(c => c.key === keyLetter && c.url);
+        if (clip && !activeClips[keyLetter]) {
+          playClip(keyLetter);
+        }
+      });
+      
+      // Mouse up - stop playing
+      key.addEventListener('mouseup', (e) => {
+        e.preventDefault();
+        const clip = clips.find(c => c.key === keyLetter && c.url);
+        if (clip && activeClips[keyLetter]) {
+          stopClip(keyLetter);
+        }
+      });
+      
+      // Mouse leave - also stop playing (in case user drags mouse off)
+      key.addEventListener('mouseleave', (e) => {
+        const clip = clips.find(c => c.key === keyLetter && c.url);
+        if (clip && activeClips[keyLetter]) {
+          stopClip(keyLetter);
+        }
+      });
+      
+      // Prevent context menu on right click
+      key.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+      });
+    }
+  });
   
   // Add keyup listener for play mode
   document.addEventListener('keyup', handlePlayModeKeyUp);
