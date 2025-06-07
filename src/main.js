@@ -282,21 +282,19 @@ function renderEditMode() {
                 <div class="time-section">
                   <div class="timestamp-section-vertical">
                     <label>Start Time:</label>
-                    <div class="time-input-row">
+                    <div class="timestamp-input-row">
                       <input type="text" class="timestamp" 
                              placeholder="${getLocalizedPlaceholder()}" 
                              value="${currentClip ? currentClip.timestamp : ''}" 
                              data-clip-index="${currentClipIndex}">
                       ${currentClip && currentClip.url && extractYouTubeVideoId(currentClip.url) ? `
-                        <button class="set-timestamp-btn" data-clip-index="${currentClipIndex}">SET CURRENT TIME</button>
+                        <button class="set-timestamp-btn" data-clip-index="${currentClipIndex}" id="set-time-btn-${currentClipIndex}" title="Set timestamp to current video time">set to 0:00</button>
                       ` : ''}
                     </div>
                     ${currentClipIndex >= 0 ? `
                       <div class="timestamp-validation" id="timestamp-validation-${currentClipIndex}"></div>
                     ` : ''}
                   </div>
-                  
-                  <span class="current-time-display" id="current-time-${currentClipIndex}" style="${currentClip && currentClip.url && extractYouTubeVideoId(currentClip.url) ? '' : 'display: none;'}"></span>
                 </div>
               </div>
               
@@ -1780,9 +1778,9 @@ function startTimeUpdater(clipIndex, player) {
 function updateCurrentTimeDisplay(clipIndex, player) {
   try {
     const currentTime = player.getCurrentTime();
-    const timeElement = document.getElementById(`current-time-${clipIndex}`);
-    if (timeElement && currentTime !== undefined) {
-      timeElement.textContent = `Current: ${formatTime(currentTime)}`;
+    const setTimeBtn = document.getElementById(`set-time-btn-${clipIndex}`);
+    if (setTimeBtn && currentTime !== undefined) {
+      setTimeBtn.textContent = `set to ${formatTime(currentTime)}`;
     }
   } catch (error) {
     // Ignore errors when player is not ready
