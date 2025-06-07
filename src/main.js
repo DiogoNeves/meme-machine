@@ -68,21 +68,139 @@ function extractYouTubeVideoId(url) {
   return match ? match[1] : null;
 }
 
-// Parse timestamp to seconds
+// Parse timestamp to seconds with comprehensive format support and validation
 function parseTimestamp(timestamp) {
-  if (!timestamp) return 0;
+  if (!timestamp || timestamp.trim() === '') return 0;
   
-  // Handle formats like "1:30", "90", "1m30s", etc.
-  const timeRegex = /(?:(\d+)[:m])?(\d+)(?:[s])?/;
-  const match = timestamp.match(timeRegex);
+  let input = timestamp.toString().trim();
   
-  if (match) {
-    const minutes = parseInt(match[1] || 0);
-    const seconds = parseInt(match[2] || 0);
-    return minutes * 60 + seconds;
+  // Normalize decimal separators - replace comma with period for parsing
+  // This supports locales that use comma as decimal separator (e.g., European locales)
+  input = input.replace(',', '.');
+  
+  // Handle various time formats with validation
+  const formats = [
+    // MM:SS.s format (e.g., "1:30.5", "12:45.25", "1:30,5")
+    {
+      regex: /^(\d{1,3}):([0-5]?\d(?:\.\d+)?)$/,
+      parse: (match) => {
+        const minutes = parseInt(match[1]);
+        const seconds = parseFloat(match[2]);
+        if (minutes > 999 || seconds >= 60) return null;
+        return minutes * 60 + seconds;
+      }
+    },
+    // M:SS.s format (e.g., "1:05.5", "2:30.25", "2:30,25")
+    {
+      regex: /^(\d{1,2}):([0-5]?\d(?:\.\d+)?)$/,
+      parse: (match) => {
+        const minutes = parseInt(match[1]);
+        const seconds = parseFloat(match[2]);
+        if (minutes > 99 || seconds >= 60) return null;
+        return minutes * 60 + seconds;
+      }
+    },
+    // Seconds with decimals (e.g., "90.5", "125.25", "90,5")  
+    {
+      regex: /^(\d+(?:\.\d+)?)$/,
+      parse: (match) => {
+        const seconds = parseFloat(match[1]);
+        if (seconds > 86400) return null; // Max 24 hours in seconds
+        return seconds;
+      }
+    },
+    // Alternative format: "1m30s", "1m30.5s", "30s", "1m30,5s"
+    {
+      regex: /^(?:(\d+)m)?(\d+(?:\.\d+)?)?s?$/,
+      parse: (match) => {
+        const minutes = parseInt(match[1] || 0);
+        const seconds = parseFloat(match[2] || 0);
+        if (minutes > 999 || seconds >= 60) return null;
+        return minutes * 60 + seconds;
+      }
+    }
+  ];
+  
+  // Try each format
+  for (const format of formats) {
+    const match = input.match(format.regex);
+    if (match) {
+      const result = format.parse(match);
+      if (result !== null && result >= 0) {
+        return result;
+      }
+    }
   }
   
-  return parseFloat(timestamp) || 0;
+  // Fallback: try parsing as a plain number
+  const fallback = parseFloat(input);
+  if (!isNaN(fallback) && fallback >= 0 && fallback <= 86400) {
+    return fallback;
+  }
+  
+  return 0;
+}
+
+// Detect local decimal separator
+function getLocalDecimalSeparator() {
+  const numberWithDecimal = 1.1;
+  const localeString = numberWithDecimal.toLocaleString();
+  return localeString.substring(1, 2);
+}
+
+// Get localized number examples
+function getLocalizedExamples() {
+  const decimalSep = getLocalDecimalSeparator();
+  
+  return {
+    decimal: decimalSep,
+    timeWithDecimal: `2:45${decimalSep}5`,
+    secondsWithDecimal: `125${decimalSep}5`,
+    minutesWithDecimal: `2m15${decimalSep}5s`
+  };
+}
+
+// Get localized placeholder text
+function getLocalizedPlaceholder() {
+  const examples = getLocalizedExamples();
+  return `1:30${examples.decimal}5 or 90${examples.decimal}25`;
+}
+
+// Validate timestamp format and provide user feedback
+function validateTimestamp(timestamp) {
+  if (!timestamp || timestamp.trim() === '') {
+    return { valid: true, message: '' };
+  }
+  
+  const parsed = parseTimestamp(timestamp);
+  const input = timestamp.toString().trim();
+  
+  // Check if parsing succeeded (non-zero result or valid zero input)
+  if (parsed > 0 || input === '0' || input === '0.0' || input === '0:00' || input === '0,00') {
+    return { 
+      valid: true, 
+      message: `Parsed as ${formatTime(parsed)}`,
+      seconds: parsed
+    };
+  }
+  
+  // Provide helpful error messages with locale-appropriate examples
+  const examples = getLocalizedExamples();
+  const suggestions = [];
+  
+  if (input.includes(':')) {
+    suggestions.push(`MM:SS format (e.g., 1:30, ${examples.timeWithDecimal})`);
+  } else if (input.includes('m') || input.includes('s')) {
+    suggestions.push(`1m30s format (e.g., 1m30s, ${examples.minutesWithDecimal})`);
+  } else {
+    suggestions.push(`Seconds (e.g., 90, ${examples.secondsWithDecimal})`);
+  }
+  
+  return { 
+    valid: false, 
+    message: `Invalid format. Expected: ${suggestions.join(' or ')}`,
+    seconds: 0
+  };
 }
 
 // Parse duration to seconds (simplified since we don't use duration anymore)
@@ -122,7 +240,10 @@ function renderEditMode() {
           ${clip.key || '?'}
         </div>
         <input type="text" class="clip-url" placeholder="YouTube URL" value="${clip.url}" data-clip-index="${index}">
-        <input type="text" class="timestamp" placeholder="0:00" value="${clip.timestamp}" data-clip-index="${index}">
+        <div class="timestamp-container">
+          <input type="text" class="timestamp" placeholder="${getLocalizedPlaceholder()}" value="${clip.timestamp}" data-clip-index="${index}">
+          <div class="timestamp-validation" id="timestamp-validation-${index}"></div>
+        </div>
         <button class="remove-clip-btn" data-clip-index="${index}" title="Remove this clip">×</button>
         ${hasValidUrl ? `
           <button class="toggle-preview-btn ${isCollapsed ? 'collapsed' : ''}" 
@@ -728,6 +849,11 @@ function setupEditModeListeners() {
           }, 100);
         }
         
+        // Validate timestamp and show feedback
+        if (fieldType === 'timestamp') {
+          validateTimestampInput(e.target.value, clipIndex);
+        }
+        
         // Update play button state
         updatePlayButtonState();
         
@@ -815,6 +941,32 @@ function validateYouTubeUrl(url, input) {
   } else {
     input.classList.remove('valid');
     input.classList.add('invalid');
+  }
+}
+
+// Validate timestamp input and show UI feedback
+function validateTimestampInput(timestamp, clipIndex) {
+  const validation = validateTimestamp(timestamp);
+  const input = document.querySelector(`.timestamp[data-clip-index="${clipIndex}"]`);
+  const validationElement = document.getElementById(`timestamp-validation-${clipIndex}`);
+  
+  if (!input) return;
+  
+  // Update input styling
+  input.classList.remove('valid', 'invalid');
+  
+  if (validation.valid) {
+    if (timestamp && timestamp.trim() !== '') {
+      input.classList.add('valid');
+    }
+  } else {
+    input.classList.add('invalid');
+  }
+  
+  // Update validation message
+  if (validationElement) {
+    validationElement.textContent = validation.message;
+    validationElement.className = `timestamp-validation ${validation.valid ? 'valid' : 'invalid'}`;
   }
 }
 
@@ -1219,7 +1371,7 @@ function getStorageInfo() {
   }
 }
 
-// Add console commands for debugging storage
+// Add console commands for debugging storage and testing time parser
 window.memeMachineStorage = {
   save: saveToStorage,
   load: loadFromStorage,
@@ -1237,10 +1389,33 @@ window.memeMachineStorage = {
   }
 };
 
+// Add console command for testing time parser
+window.testTimeParser = (timestamp) => {
+  const validation = validateTimestamp(timestamp);
+  const parsed = parseTimestamp(timestamp);
+  const examples = getLocalizedExamples();
+  
+  console.log(`Input: "${timestamp}"`);
+  console.log(`Parsed: ${parsed} seconds`);
+  console.log(`Formatted: ${formatTime(parsed)}`);
+  console.log(`Valid: ${validation.valid}`);
+  console.log(`Message: ${validation.message}`);
+  console.log(`Local decimal separator: "${examples.decimal}"`);
+  console.log(`Try these local formats: ${examples.timeWithDecimal}, ${examples.secondsWithDecimal}`);
+  
+  return { input: timestamp, parsed, formatted: formatTime(parsed), validation, examples };
+};
+
 // Setup Edit Mode
 function setupEditMode() {
   setTimeout(() => {
     setupPreviewPlayers();
+    // Validate existing timestamps on load
+    clips.forEach((clip, index) => {
+      if (clip.timestamp) {
+        validateTimestampInput(clip.timestamp, index);
+      }
+    });
   }, 100); // Small delay to ensure DOM is ready
 }
 
