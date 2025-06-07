@@ -238,7 +238,10 @@ function renderEditMode() {
 
   return `
     <div class="edit-mode">
-      <h1>Meme Machine <span class="mode-subtitle">- Edit Mode</span></h1>
+      <div class="header-row">
+        <h1>Meme Machine <span class="mode-subtitle">- Edit Mode</span></h1>
+        <button class="help-btn" title="Show help">?</button>
+      </div>
       
       <div class="edit-help-section">
         <div class="edit-help-text">
@@ -249,67 +252,67 @@ function renderEditMode() {
         </div>
       </div>
       
-      <div class="edit-main-area">
-        <div class="edit-canvas">
-          ${currentEditingKey ? `
-            <div class="edit-controls">
-              <div class="key-display">
+      <div class="edit-preview-area">
+        ${currentEditingKey && currentClip && currentClip.url && extractYouTubeVideoId(currentClip.url) ? `
+          <div id="edit-preview-player"></div>
+        ` : `
+          <div class="preview-placeholder-edit">
+            <div class="preview-text">Video preview area</div>
+          </div>
+        `}
+      </div>
+      
+      <div class="edit-controls-area">
+        ${currentEditingKey ? `
+          <div class="edit-controls-compact">
+            <div class="control-grid">
+              <div class="key-section">
                 <div class="editing-key">${currentEditingKey}</div>
-                <button class="change-key-btn" title="Change key">Change Key</button>
+                <button class="remap-btn" title="Change to different key">remap</button>
               </div>
               
-              <div class="url-section">
-                <label>YouTube URL:</label>
-                <input type="text" class="clip-url" placeholder="https://youtube.com/watch?v=..." 
-                       value="${currentClip ? currentClip.url : ''}" 
-                       data-clip-index="${currentClipIndex}">
-              </div>
-              
-              <div class="time-controls-row">
-                <div class="timestamp-section">
-                  <label>Start Time:</label>
-                  <div class="timestamp-container">
-                    <input type="text" class="timestamp" 
-                           placeholder="${getLocalizedPlaceholder()}" 
-                           value="${currentClip ? currentClip.timestamp : ''}" 
-                           data-clip-index="${currentClipIndex}">
-                    <div class="timestamp-validation" id="timestamp-validation-${currentClipIndex}"></div>
-                  </div>
+              <div class="url-time-group">
+                <div class="url-section-vertical">
+                  <label>YouTube URL:</label>
+                  <input type="text" class="clip-url" placeholder="https://youtu.be/dj0i0ZIwBUc" 
+                         value="${currentClip ? currentClip.url : ''}" 
+                         data-clip-index="${currentClipIndex}">
                 </div>
                 
-                ${currentClip && currentClip.url && extractYouTubeVideoId(currentClip.url) ? `
-                  <div class="preview-controls-edit">
-                    <button class="set-timestamp-btn" data-clip-index="${currentClipIndex}">Set Current Time</button>
-                    <span class="current-time" id="current-time-${currentClipIndex}">0:00</span>
+                <div class="time-section">
+                  <div class="timestamp-section-vertical">
+                    <label>Start Time:</label>
+                    <div class="time-input-row">
+                      <input type="text" class="timestamp" 
+                             placeholder="${getLocalizedPlaceholder()}" 
+                             value="${currentClip ? currentClip.timestamp : ''}" 
+                             data-clip-index="${currentClipIndex}">
+                      ${currentClip && currentClip.url && extractYouTubeVideoId(currentClip.url) ? `
+                        <button class="set-timestamp-btn" data-clip-index="${currentClipIndex}">SET CURRENT TIME</button>
+                      ` : ''}
+                    </div>
+                    ${currentClipIndex >= 0 ? `
+                      <div class="timestamp-validation" id="timestamp-validation-${currentClipIndex}"></div>
+                    ` : ''}
                   </div>
-                ` : ''}
+                  
+                  <span class="current-time-display" id="current-time-${currentClipIndex}" style="${currentClip && currentClip.url && extractYouTubeVideoId(currentClip.url) ? '' : 'display: none;'}"></span>
+                </div>
               </div>
               
-              <div class="edit-actions">
+              <div class="control-actions">
                 ${currentClip && currentClip.url ? `
                   <button class="unmap-key-btn" data-key="${currentEditingKey}">Unmap Key</button>
                 ` : ''}
                 <button class="done-editing-btn">Done</button>
               </div>
             </div>
-            
-            ${currentClip && currentClip.url && extractYouTubeVideoId(currentClip.url) ? `
-              <div class="preview-area">
-                <div id="edit-preview-player"></div>
-              </div>
-            ` : `
-              <div class="preview-placeholder">
-                ${currentClip && !currentClip.url ? 'Add a YouTube URL to see preview' : 'No preview available'}
-              </div>
-            `}
-          ` : `
-            <div class="no-key-selected">
-              <div class="select-key-message">
-                Select a key from the keyboard below to start mapping
-              </div>
-            </div>
-          `}
-        </div>
+          </div>
+        ` : `
+          <div class="no-key-message">
+            Select a key from the keyboard below to start mapping
+          </div>
+        `}
       </div>
       
       <div class="virtual-keyboard-edit">
@@ -318,17 +321,14 @@ function renderEditMode() {
       
       <div class="edit-bottom-controls">
         <div class="background-section-compact">
-          <label>Background:</label>
+          <label>Background audio:</label>
           <input type="text" class="background-track" placeholder="YouTube URL or upload" value="${backgroundTrack}">
           <button class="upload-btn" title="Upload audio file">📁</button>
           ${backgroundAudioFile || backgroundTrack ? '<button class="clear-audio-btn" title="Clear">×</button>' : ''}
           <input type="file" class="audio-file-input" accept="audio/*" style="display: none;">
         </div>
         
-        <div class="mode-controls">
-          <button class="help-btn" title="Show help">?</button>
-          <button class="play-mode-btn" ${clips.some(c => c.url && c.key) ? '' : 'disabled'}>Play Mode</button>
-        </div>
+        <button class="play-mode-btn" ${clips.some(c => c.url && c.key) ? '' : 'disabled'}>Play Mode</button>
       </div>
       
       <div class="creator-credits">
@@ -364,7 +364,10 @@ function renderPlayMode() {
 
   return `
     <div class="play-mode">
-      <h1>Meme Machine <span class="mode-subtitle">- Play Mode</span></h1>
+      <div class="header-row">
+        <h1>Meme Machine <span class="mode-subtitle">- Play Mode</span></h1>
+        <button class="help-btn" title="Show help">?</button>
+      </div>
       
       <div class="video-canvas">
         <div class="canvas-content">
@@ -864,7 +867,7 @@ function setupEditModeListeners() {
   const audioFileInput = document.querySelector('.audio-file-input');
   const clearAudioBtn = document.querySelector('.clear-audio-btn');
   const virtualKeys = document.querySelectorAll('.virtual-key-edit');
-  const changeKeyBtn = document.querySelector('.change-key-btn');
+  const remapBtn = document.querySelector('.remap-btn');
   const doneEditingBtn = document.querySelector('.done-editing-btn');
   const unmapKeyBtn = document.querySelector('.unmap-key-btn');
   const setTimestampBtn = document.querySelector('.set-timestamp-btn');
@@ -887,23 +890,28 @@ function setupEditModeListeners() {
     key.addEventListener('click', (e) => {
       const keyLetter = e.currentTarget.dataset.key;
       if (keyLetter) {
-        // If this key already exists in clips, edit it; otherwise create new
-        let existingClip = clips.find(c => c.key === keyLetter);
-        if (!existingClip) {
-          existingClip = { key: keyLetter, url: '', timestamp: '' };
-          clips.push(existingClip);
+        // Toggle selection if clicking the same key
+        if (currentEditingKey === keyLetter) {
+          currentEditingKey = null;
+        } else {
+          // If this key already exists in clips, edit it; otherwise create new
+          let existingClip = clips.find(c => c.key === keyLetter);
+          if (!existingClip) {
+            existingClip = { key: keyLetter, url: '', timestamp: '' };
+            clips.push(existingClip);
+          }
+          currentEditingKey = keyLetter;
         }
         
-        currentEditingKey = keyLetter;
         saveToStorage();
         renderCurrentMode();
       }
     });
   });
   
-  // Change key button
-  if (changeKeyBtn) {
-    changeKeyBtn.addEventListener('click', () => {
+  // Remap button
+  if (remapBtn) {
+    remapBtn.addEventListener('click', () => {
       isListeningForKey = true;
       // Store the current editing key as the one to remap
       listeningClipIndex = clips.findIndex(c => c.key === currentEditingKey);
@@ -915,6 +923,7 @@ function setupEditModeListeners() {
   if (doneEditingBtn) {
     doneEditingBtn.addEventListener('click', () => {
       currentEditingKey = null;
+      saveToStorage();
       renderCurrentMode();
     });
   }
@@ -1651,7 +1660,7 @@ function setupEditPreviewPlayer() {
   
   // Create new player
   previewPlayers.edit = new YT.Player('edit-preview-player', {
-    height: '300',
+    height: '240',
     width: '100%',
     videoId: videoId,
     playerVars: {
@@ -1773,7 +1782,7 @@ function updateCurrentTimeDisplay(clipIndex, player) {
     const currentTime = player.getCurrentTime();
     const timeElement = document.getElementById(`current-time-${clipIndex}`);
     if (timeElement && currentTime !== undefined) {
-      timeElement.textContent = formatTime(currentTime);
+      timeElement.textContent = `Current: ${formatTime(currentTime)}`;
     }
   } catch (error) {
     // Ignore errors when player is not ready
