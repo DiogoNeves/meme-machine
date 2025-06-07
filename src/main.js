@@ -30,7 +30,8 @@ const STORAGE_KEYS = {
   backgroundAudioData: 'meme-machine-background-audio-data',
   backgroundAudioName: 'meme-machine-background-audio-name',
   collapsedPreviews: 'meme-machine-collapsed-previews',
-  settings: 'meme-machine-settings'
+  settings: 'meme-machine-settings',
+  firstVisit: 'meme-machine-first-visit'
 };
 
 // Initialize the app
@@ -39,6 +40,7 @@ function init() {
   loadFromStorage(); // Load saved data first
   renderCurrentMode();
   setupEventListeners();
+  checkFirstVisit(); // Check if this is the first visit and show help if needed
   console.log('Meme Machine loaded with saved settings');
 }
 
@@ -274,6 +276,7 @@ function renderEditMode() {
       <div class="background-section">
         <input type="text" class="background-track" placeholder="background track (optional)" value="${backgroundTrack}" readonly>
         <button class="upload-btn">Upload</button>
+        <button class="help-btn" title="Show help and tutorial">?</button>
         <input type="file" class="audio-file-input" accept="audio/*" style="display: none;">
         ${backgroundAudioFile ? '<button class="clear-audio-btn">×</button>' : ''}
       </div>
@@ -691,6 +694,7 @@ function setupEditModeListeners() {
   const mapNewKeyBtn = document.querySelector('.map-new-key-btn');
   const backgroundTrackInput = document.querySelector('.background-track');
   const uploadBtn = document.querySelector('.upload-btn');
+  const helpBtn = document.querySelector('.help-btn');
   const audioFileInput = document.querySelector('.audio-file-input');
   const clearAudioBtn = document.querySelector('.clear-audio-btn');
   const keyButtons = document.querySelectorAll('.key-button');
@@ -791,13 +795,20 @@ function setupEditModeListeners() {
     });
   }
   
-  // Upload button
+    // Upload button
   if (uploadBtn) {
     uploadBtn.addEventListener('click', () => {
       audioFileInput.click();
     });
   }
-  
+
+  // Help button
+  if (helpBtn) {
+    helpBtn.addEventListener('click', () => {
+      showHelpModal();
+    });
+  }
+
   // Audio file input
   if (audioFileInput) {
     audioFileInput.addEventListener('change', (e) => {
@@ -1550,6 +1561,109 @@ function togglePreviewCollapse(clipIndex) {
   renderCurrentMode();
   
   console.log(`Preview ${clipIndex} ${collapsedPreviews[clipIndex] ? 'collapsed' : 'expanded'}`);
+}
+
+// Check if this is the first visit and show help modal
+function checkFirstVisit() {
+  const hasVisited = localStorage.getItem(STORAGE_KEYS.firstVisit);
+  if (!hasVisited) {
+    showHelpModal();
+    localStorage.setItem(STORAGE_KEYS.firstVisit, 'true');
+  }
+}
+
+// Show help modal
+function showHelpModal() {
+  const modal = createHelpModal();
+  document.body.appendChild(modal);
+  
+  // Focus the modal for accessibility
+  setTimeout(() => {
+    const closeBtn = modal.querySelector('.help-modal-close');
+    if (closeBtn) closeBtn.focus();
+  }, 100);
+}
+
+// Create help modal HTML
+function createHelpModal() {
+  const modal = document.createElement('div');
+  modal.className = 'help-modal-overlay';
+  modal.innerHTML = `
+    <div class="help-modal">
+      <div class="help-modal-header">
+        <h2>Welcome to Meme Machine!</h2>
+        <button class="help-modal-close" title="Close help">×</button>
+      </div>
+      <div class="help-modal-content">
+        <div class="help-section">
+          <h3>🎵 Background Audio (Optional)</h3>
+          <p>Click <strong>"Upload"</strong> to add background music that will loop while you play clips. This is completely optional.</p>
+        </div>
+        
+        <div class="help-section">
+          <h3>🎬 Adding Video Clips</h3>
+          <p>1. Click on a key button (like <strong>A</strong>) to assign it to that letter</p>
+          <p>2. Paste a <strong>YouTube URL</strong> in the text field</p>
+          <p>3. Set a <strong>timestamp</strong> (like 1:30 or 90.5) to start from a specific moment</p>
+          <p>4. Use the ▲/▼ button to preview and fine-tune the timing</p>
+        </div>
+        
+        <div class="help-section">
+          <h3>🎮 Playing Your Memes</h3>
+          <p>1. Click <strong>"Play"</strong> to enter play mode</p>
+          <p>2. Press any mapped key to play that video clip</p>
+          <p>3. Press <strong>Space</strong> to start/stop background music</p>
+          <p>4. Have fun creating epic meme moments!</p>
+        </div>
+        
+        <div class="help-section">
+          <h3>💡 Pro Tips</h3>
+          <p>• Use timestamps to skip intros: "0:15" or "15"</p>
+          <p>• Collapse previews with ▲ to save screen space</p>
+          <p>• Your settings are automatically saved</p>
+          <p>• Each key can have its own unique video clip</p>
+        </div>
+        
+        <div class="help-section">
+          <h3>⌨️ Timestamp Formats</h3>
+          <p>All of these work: <code>1:30</code>, <code>90</code>, <code>90.5</code>, <code>1m30s</code></p>
+        </div>
+      </div>
+      <div class="help-modal-footer">
+        <button class="help-modal-got-it">Got it! Let's start</button>
+      </div>
+    </div>
+  `;
+  
+  // Add event listeners
+  const closeBtn = modal.querySelector('.help-modal-close');
+  const gotItBtn = modal.querySelector('.help-modal-got-it');
+  const overlay = modal;
+  
+  const closeModal = () => {
+    document.body.removeChild(modal);
+  };
+  
+  closeBtn.addEventListener('click', closeModal);
+  gotItBtn.addEventListener('click', closeModal);
+  
+  // Close on overlay click (but not on modal content click)
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) {
+      closeModal();
+    }
+  });
+  
+  // Close on Escape key
+  const handleEscape = (e) => {
+    if (e.key === 'Escape') {
+      closeModal();
+      document.removeEventListener('keydown', handleEscape);
+    }
+  };
+  document.addEventListener('keydown', handleEscape);
+  
+  return modal;
 }
 
 // Start the app
