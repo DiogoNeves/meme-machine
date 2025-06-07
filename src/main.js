@@ -274,11 +274,14 @@ function renderEditMode() {
       <h1>Meme Machine <span class="mode-subtitle">- Edit Mode</span></h1>
       
       <div class="background-section">
-        <input type="text" class="background-track" placeholder="background track (optional)" value="${backgroundTrack}" readonly>
-        <button class="upload-btn">Upload</button>
-        <button class="help-btn" title="Show help and tutorial">?</button>
-        <input type="file" class="audio-file-input" accept="audio/*" style="display: none;">
-        ${backgroundAudioFile ? '<button class="clear-audio-btn">×</button>' : ''}
+        <div class="background-label">Background Audio / Beat</div>
+        <div class="background-input-group">
+          <input type="text" class="background-track" placeholder="YouTube URL or upload audio file" value="${backgroundTrack}">
+          <button class="upload-btn" title="Upload audio file">📁</button>
+          <button class="help-btn" title="Show help and tutorial">?</button>
+          <input type="file" class="audio-file-input" accept="audio/*" style="display: none;">
+          ${backgroundAudioFile || backgroundTrack ? '<button class="clear-audio-btn" title="Clear background audio">×</button>' : ''}
+        </div>
       </div>
       
       <div class="clips-section">
@@ -289,7 +292,7 @@ function renderEditMode() {
       <div class="instructions-edit">
         ${isListeningForKey ? 
           '<div class="listening-message">Press any letter key to map it...</div>' : 
-          '<div class="mapping-instructions">Click on a key button to map it to a different key<br/>Add YouTube URLs to see video previews<br/>Use ▲/▼ to hide/show previews</div>'
+          '<div class="mapping-instructions">Click on a key button to map it to a different key<br/>Add YouTube URLs to see video previews<br/>Use ▲/▼ to hide/show previews<br/>Add background audio with YouTube URL or file upload</div>'
         }
       </div>
       
@@ -785,13 +788,30 @@ function setupEditModeListeners() {
     });
   });
   
-  // Background track input (now readonly, but keep for manual URL input)
+  // Background track input (supports YouTube URLs)
   if (backgroundTrackInput) {
     backgroundTrackInput.addEventListener('input', (e) => {
-      if (!backgroundAudioFile) { // Only allow manual input if no file is uploaded
-        backgroundTrack = e.target.value;
-        saveToStorage(); // Auto-save background track changes
+      backgroundTrack = e.target.value;
+      
+      // If user enters a URL, clear any uploaded file
+      if (backgroundTrack.trim() && backgroundAudioFile) {
+        if (backgroundAudioFile.audioUrl) {
+          URL.revokeObjectURL(backgroundAudioFile.audioUrl);
+        }
+        backgroundAudioFile = null;
       }
+      
+      // Validate YouTube URL if provided
+      if (backgroundTrack.trim()) {
+        validateYouTubeUrl(backgroundTrack, e.target);
+      } else {
+        e.target.classList.remove('valid', 'invalid');
+      }
+      
+      saveToStorage(); // Auto-save background track changes
+      
+      // Update UI to show/hide clear button
+      setTimeout(() => renderCurrentMode(), 100);
     });
   }
   
@@ -897,6 +917,12 @@ function handleAudioFileUpload(file) {
   backgroundAudioFile = file;
   backgroundTrack = file.name;
   
+  // Clear any YouTube URL input when uploading a file
+  const backgroundTrackInput = document.querySelector('.background-track');
+  if (backgroundTrackInput) {
+    backgroundTrackInput.classList.remove('valid', 'invalid');
+  }
+  
   // Create audio URL for preview/playback
   if (backgroundAudioFile.audioUrl) {
     URL.revokeObjectURL(backgroundAudioFile.audioUrl);
@@ -930,6 +956,13 @@ function clearBackgroundAudio() {
   const audioFileInput = document.querySelector('.audio-file-input');
   if (audioFileInput) {
     audioFileInput.value = '';
+  }
+  
+  // Clear the URL input and its validation state
+  const backgroundTrackInput = document.querySelector('.background-track');
+  if (backgroundTrackInput) {
+    backgroundTrackInput.value = '';
+    backgroundTrackInput.classList.remove('valid', 'invalid');
   }
   
   console.log('Background audio cleared');
@@ -1596,8 +1629,11 @@ function createHelpModal() {
       </div>
       <div class="help-modal-content">
         <div class="help-section">
-          <h3>🎵 Background Audio (Optional)</h3>
-          <p>Click <strong>"Upload"</strong> to add background music that will loop while you play clips. This is completely optional.</p>
+          <h3>🎵 Background Audio / Beat (Optional)</h3>
+          <p>Add background music that will loop while you play clips:</p>
+          <p>• Paste a <strong>YouTube URL</strong> for music videos or beats</p>
+          <p>• Or click <strong>"📁"</strong> to upload your own audio file</p>
+          <p>This is completely optional but adds atmosphere to your meme sessions!</p>
         </div>
         
         <div class="help-section">
