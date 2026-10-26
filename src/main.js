@@ -1,1961 +1,1368 @@
-import './style.css'
+import "./style.css";
+import { getAnalyser } from "./audio.js";
+import { Background, Engine } from "./engine.js";
+import { icon } from "./icons.js";
+import { MORE_SOURCES, SUGGESTIONS, searchSounds } from "./library.js";
+import { COLOURS, KEYS, ROWS, describeSource, hasSource, newPad, normaliseBackground, padTitle } from "./pads.js";
+import { decodeKit, encodeKit } from "./share.js";
+import { fileUrl, forgetFile, listFileIds, loadState, migrateLegacy, newFileId, putFile, saveState } from "./storage.js";
+import { formatTime, parseTime } from "./time.js";
+import { ERROR_MESSAGES, loadYouTubeAPI } from "./youtube.js";
 
-// Application state
-let currentMode = 'edit'; // 'edit' or 'play'
-let clips = [
-  { key: 'A', url: '', timestamp: '' }
-];
-let backgroundTrack = '';
-let backgroundAudioFile = null; // Store the actual audio file
-let isListeningForKey = false;
-let listeningClipIndex = -1;
-let currentEditingKey = null; // Track which key is currently being edited
+const MAX_UPLOAD = 40 * 1024 * 1024;
+const AUDIO_ACCEPT = "audio/*,video/mp4,video/webm,.mp3,.m4a,.wav,.ogg,.opus,.flac,.aac";
 
-// Play mode state
-let backgroundAudioElement = null;
-let backgroundYouTubePlayer = null;
-let youtubePlayers = {}; // Store YouTube players by clip key
-let previewPlayers = {}; // Store preview players for edit mode
-let activeClips = {}; // Track which clips are currently playing
-let clipTimeouts = {}; // Store timeouts for clip duration limits
-let clipProgressIntervals = {}; // Store progress update intervals
-let isYouTubeAPIReady = false;
-let audioContext = null;
-let audioAnalyser = null;
-let audioDataArray = null;
+const $ = (selector, root = document) => root.querySelector(selector);
+const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+const esc = (value) =>
+  String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const isTouchOnly = () => matchMedia("(hover: none) and (pointer: coarse)").matches;
 
-// LocalStorage keys
-const STORAGE_KEYS = {
-  clips: 'meme-machine-clips',
-  backgroundTrack: 'meme-machine-background-track',
-  backgroundAudioData: 'meme-machine-background-audio-data',
-  backgroundAudioName: 'meme-machine-background-audio-name',
-  settings: 'meme-machine-settings',
-  firstVisit: 'meme-machine-first-visit'
+const state = {
+  mode: "edit",
+  pads: {},
+  background: null,
+  seenHelp: false,
+  selected: null,
+  moving: null,
+  errors: {},
+  lastKey: null,
 };
 
-// Initialize the app
-function init() {
-  loadYouTubeAPI();
-  loadFromStorage(); // Load saved data first
-  renderCurrentMode();
-  setupEventListeners();
-  checkFirstVisit(); // Check if this is the first visit and show help if needed
-  console.log('Meme Machine loaded with saved settings');
-}
+let engine;
+let background;
 
-// Load YouTube iFrame API
-function loadYouTubeAPI() {
-  if (window.YT) {
-    isYouTubeAPIReady = true;
-    return;
-  }
-  
-  const tag = document.createElement('script');
-  tag.src = 'https://www.youtube.com/iframe_api';
-  const firstScriptTag = document.getElementsByTagName('script')[0];
-  firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
-  
-  // YouTube API callback
-  window.onYouTubeIframeAPIReady = () => {
-    isYouTubeAPIReady = true;
-    console.log('YouTube API loaded');
-  };
-}
+// ---------------------------------------------------------------------------
+// Shell
+// ---------------------------------------------------------------------------
 
-// Extract YouTube video ID from URL
-function extractYouTubeVideoId(url) {
-  const regex = /(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/;
-  const match = url.match(regex);
-  return match ? match[1] : null;
-}
-
-// Parse timestamp to seconds with comprehensive format support and validation
-function parseTimestamp(timestamp) {
-  if (!timestamp || timestamp.trim() === '') return 0;
-  
-  let input = timestamp.toString().trim();
-  
-  // Normalize decimal separators - replace comma with period for parsing
-  // This supports locales that use comma as decimal separator (e.g., European locales)
-  input = input.replace(',', '.');
-  
-  // Handle various time formats with validation
-  const formats = [
-    // MM:SS.s format (e.g., "1:30.5", "12:45.25", "1:30,5")
-    {
-      regex: /^(\d{1,3}):([0-5]?\d(?:\.\d+)?)$/,
-      parse: (match) => {
-        const minutes = parseInt(match[1]);
-        const seconds = parseFloat(match[2]);
-        if (minutes > 999 || seconds >= 60) return null;
-        return minutes * 60 + seconds;
-      }
-    },
-    // M:SS.s format (e.g., "1:05.5", "2:30.25", "2:30,25")
-    {
-      regex: /^(\d{1,2}):([0-5]?\d(?:\.\d+)?)$/,
-      parse: (match) => {
-        const minutes = parseInt(match[1]);
-        const seconds = parseFloat(match[2]);
-        if (minutes > 99 || seconds >= 60) return null;
-        return minutes * 60 + seconds;
-      }
-    },
-    // Seconds with decimals (e.g., "90.5", "125.25", "90,5")  
-    {
-      regex: /^(\d+(?:\.\d+)?)$/,
-      parse: (match) => {
-        const seconds = parseFloat(match[1]);
-        if (seconds > 86400) return null; // Max 24 hours in seconds
-        return seconds;
-      }
-    },
-    // Alternative format: "1m30s", "1m30.5s", "30s", "1m30,5s"
-    {
-      regex: /^(?:(\d+)m)?(\d+(?:\.\d+)?)?s?$/,
-      parse: (match) => {
-        const minutes = parseInt(match[1] || 0);
-        const seconds = parseFloat(match[2] || 0);
-        if (minutes > 999 || seconds >= 60) return null;
-        return minutes * 60 + seconds;
-      }
-    }
-  ];
-  
-  // Try each format
-  for (const format of formats) {
-    const match = input.match(format.regex);
-    if (match) {
-      const result = format.parse(match);
-      if (result !== null && result >= 0) {
-        return result;
-      }
-    }
-  }
-  
-  // Fallback: try parsing as a plain number
-  const fallback = parseFloat(input);
-  if (!isNaN(fallback) && fallback >= 0 && fallback <= 86400) {
-    return fallback;
-  }
-  
-  return 0;
-}
-
-// Detect local decimal separator
-function getLocalDecimalSeparator() {
-  const numberWithDecimal = 1.1;
-  const localeString = numberWithDecimal.toLocaleString();
-  return localeString.substring(1, 2);
-}
-
-// Get localized number examples
-function getLocalizedExamples() {
-  const decimalSep = getLocalDecimalSeparator();
-  
-  return {
-    decimal: decimalSep,
-    timeWithDecimal: `2:45${decimalSep}5`,
-    secondsWithDecimal: `125${decimalSep}5`,
-    minutesWithDecimal: `2m15${decimalSep}5s`
-  };
-}
-
-// Get localized placeholder text
-function getLocalizedPlaceholder() {
-  const examples = getLocalizedExamples();
-  return `1:30${examples.decimal}5 or 90${examples.decimal}25`;
-}
-
-// Validate timestamp format and provide user feedback
-function validateTimestamp(timestamp) {
-  if (!timestamp || timestamp.trim() === '') {
-    return { valid: true, message: '' };
-  }
-  
-  const parsed = parseTimestamp(timestamp);
-  const input = timestamp.toString().trim();
-  
-  // Check if parsing succeeded (non-zero result or valid zero input)
-  if (parsed > 0 || input === '0' || input === '0.0' || input === '0:00' || input === '0,00') {
-    return { 
-      valid: true, 
-      message: `Parsed as ${formatTime(parsed)}`,
-      seconds: parsed
-    };
-  }
-  
-  // Provide helpful error messages with locale-appropriate examples
-  const examples = getLocalizedExamples();
-  const suggestions = [];
-  
-  if (input.includes(':')) {
-    suggestions.push(`MM:SS format (e.g., 1:30, ${examples.timeWithDecimal})`);
-  } else if (input.includes('m') || input.includes('s')) {
-    suggestions.push(`1m30s format (e.g., 1m30s, ${examples.minutesWithDecimal})`);
-  } else {
-    suggestions.push(`Seconds (e.g., 90, ${examples.secondsWithDecimal})`);
-  }
-  
-  return { 
-    valid: false, 
-    message: `Invalid format. Expected: ${suggestions.join(' or ')}`,
-    seconds: 0
-  };
-}
-
-// Parse duration to seconds (simplified since we don't use duration anymore)
-function parseDuration(duration) {
-  return 5; // Default 5 seconds for backward compatibility
-}
-
-// Render the current mode
-function renderCurrentMode() {
-  const app = document.querySelector('#app');
-  
-  if (currentMode === 'edit') {
-    app.innerHTML = renderEditMode();
-    setupEditMode(); // Setup preview players after rendering
-  } else {
-    app.innerHTML = renderPlayMode();
-    if (currentMode === 'play') {
-      setupPlayMode();
-    }
-  }
-  
-  // Re-setup event listeners after rendering
-  setupModeSpecificListeners();
-}
-
-// Render Edit Mode
-function renderEditMode() {
-  const mappedClips = clips.filter(clip => clip.key);
-  const currentClip = currentEditingKey ? clips.find(clip => clip.key === currentEditingKey) : null;
-  const currentClipIndex = currentClip ? clips.indexOf(currentClip) : -1;
-  
-  const virtualKeyboardHTML = generateVirtualKeyboardForEdit(clips);
-
-  return `
-    <div class="edit-mode">
-      <div class="header-row">
-        <h1>Meme Machine <span class="mode-subtitle">- Edit Mode</span></h1>
-        <button class="help-btn" title="Show help">?</button>
+function renderShell() {
+  $("#app").innerHTML = `
+    <header class="topbar">
+      <a class="brand" href="./" aria-label="Meme Machine home">
+        <img src="${import.meta.env.BASE_URL}favicon.svg" alt="" width="28" height="28">
+        <span>Meme Machine</span>
+      </a>
+      <div class="mode-switch" role="group" aria-label="Mode">
+        <button type="button" data-mode="edit">${icon("pencil")}<span>Edit</span></button>
+        <button type="button" data-mode="play">${icon("pads")}<span>Play</span></button>
       </div>
-      
-      <div class="edit-help-section">
-        <div class="edit-help-text">
-          ${currentEditingKey ? 
-            `Editing key <strong>${currentEditingKey}</strong> - Add a YouTube URL and set the timestamp for the clip` :
-            'Click any key on the keyboard below to start mapping it to a YouTube clip'
-          }
-        </div>
-      </div>
-      
-      <div class="edit-preview-area">
-        ${currentEditingKey && currentClip && currentClip.url && extractYouTubeVideoId(currentClip.url) ? `
-          <div id="edit-preview-player"></div>
-        ` : `
-          <div class="preview-placeholder-edit">
-            <div class="preview-text">Video preview area</div>
-          </div>
-        `}
-      </div>
-      
-      <div class="edit-controls-area">
-        ${currentEditingKey ? `
-          <div class="edit-controls-compact">
-            <div class="control-grid">
-              <div class="key-section">
-                <div class="editing-key">${currentEditingKey}</div>
-                <button class="remap-btn" title="Change to different key">remap</button>
-              </div>
-              
-              <div class="url-time-group">
-                <div class="url-section-vertical">
-                  <label>YouTube URL:</label>
-                  <input type="text" class="clip-url" placeholder="https://youtu.be/dj0i0ZIwBUc" 
-                         value="${currentClip ? currentClip.url : ''}" 
-                         data-clip-index="${currentClipIndex}">
-                </div>
-                
-                <div class="time-section">
-                  <div class="timestamp-section-vertical">
-                    <label>Start Time:</label>
-                    <div class="timestamp-input-row">
-                      <input type="text" class="timestamp" 
-                             placeholder="${getLocalizedPlaceholder()}" 
-                             value="${currentClip ? currentClip.timestamp : ''}" 
-                             data-clip-index="${currentClipIndex}">
-                      ${currentClip && currentClip.url && extractYouTubeVideoId(currentClip.url) ? `
-                        <button class="set-timestamp-btn" data-clip-index="${currentClipIndex}" id="set-time-btn-${currentClipIndex}" title="Set timestamp to current video time">set to 0:00</button>
-                      ` : ''}
-                    </div>
-                    ${currentClipIndex >= 0 ? `
-                      <div class="timestamp-validation" id="timestamp-validation-${currentClipIndex}"></div>
-                    ` : ''}
-                  </div>
-                </div>
-              </div>
-              
-              <div class="control-actions">
-                ${currentClip && currentClip.url ? `
-                  <button class="unmap-key-btn" data-key="${currentEditingKey}">Unmap Key</button>
-                ` : ''}
-                <button class="done-editing-btn">Done</button>
-              </div>
+      <nav class="top-actions" aria-label="Tools">
+        <button type="button" class="btn ghost" data-action="library" title="Free sound library" aria-label="Free sound library">${icon("search")}<span class="hide-sm">Sounds</span></button>
+        <button type="button" class="btn ghost" data-action="kit" title="Share or reset your kit" aria-label="Share or reset your kit">${icon("link")}<span class="hide-sm">Share</span></button>
+        <button type="button" class="icon-btn" data-action="help" aria-label="Help">${icon("help")}</button>
+      </nav>
+    </header>
+
+    <main class="layout">
+      <section class="stage-area" aria-label="Stage">
+        <div class="stage" id="stage">
+          <canvas class="viz" id="viz" aria-hidden="true"></canvas>
+          <div class="stage-overlay" id="overlay"></div>
+          <div class="preview" id="preview">
+            <div class="preview-yt"><div id="preview-yt"></div></div>
+            <div class="preview-audio">
+              <div class="preview-audio-title" id="preview-audio-title"></div>
+              <audio id="preview-audio" controls preload="metadata"></audio>
             </div>
           </div>
-        ` : `
-          <div class="no-key-message">
-            Select a key from the keyboard below to start mapping
-          </div>
-        `}
-      </div>
-      
-      <div class="virtual-keyboard-edit">
-        ${virtualKeyboardHTML}
-      </div>
-      
-      <div class="edit-bottom-controls">
-        <div class="background-section-compact">
-          <label>Background audio:</label>
-          <input type="text" class="background-track" placeholder="YouTube URL or upload" value="${backgroundTrack}">
-          <button class="upload-btn" title="Upload audio file">📁</button>
-          ${backgroundAudioFile || backgroundTrack ? '<button class="clear-audio-btn" title="Clear">×</button>' : ''}
-          <input type="file" class="audio-file-input" accept="audio/*" style="display: none;">
+          <div class="yt-layers" id="layers"></div>
+          <div class="now-playing" id="now-playing" aria-live="polite"></div>
         </div>
-        
-        <button class="play-mode-btn" ${clips.some(c => c.url && c.key) ? '' : 'disabled'}>Play Mode</button>
-      </div>
-      
-      <div class="creator-credits">
-        <div class="credits-text">Created by <strong>Diogo Neves</strong></div>
-        <div class="credits-links">
-          <a href="https://github.com/DiogoNeves/meme-machine" target="_blank" rel="noopener noreferrer" title="View source code on GitHub">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
-            </svg>
-            GitHub
-          </a>
-          <a href="https://www.youtube.com/@DiogoNeves" target="_blank" rel="noopener noreferrer" title="Check out my YouTube channel">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
-            </svg>
-            YouTube
-          </a>
-        </div>
-      </div>
-    </div>
+        <div class="transport" id="transport"></div>
+      </section>
+
+      <section class="editor" id="editor" aria-label="Pad editor"></section>
+
+      <section class="pads" aria-label="Pads">
+        <div class="keyboard" id="keyboard"></div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <span>Made by <strong>Diogo Neves</strong></span>
+      <a href="https://github.com/DiogoNeves/meme-machine" target="_blank" rel="noopener noreferrer">GitHub</a>
+      <a href="https://www.youtube.com/@DiogoNeves" target="_blank" rel="noopener noreferrer">YouTube</a>
+    </footer>
+
+    <div class="toasts" id="toasts" aria-live="polite"></div>
+    <dialog class="dialog" id="dialog"></dialog>
+    <input type="file" id="file-input" accept="${AUDIO_ACCEPT}" hidden>
   `;
 }
 
-// Render Play Mode
-function renderPlayMode() {
-  const mappedClips = clips.filter(clip => clip.key && clip.url);
-  const virtualKeyboardHTML = generateVirtualKeyboard(mappedClips);
+// ---------------------------------------------------------------------------
+// State changes
+// ---------------------------------------------------------------------------
 
-  return `
-    <div class="play-mode">
-      <div class="header-row">
-        <h1>Meme Machine <span class="mode-subtitle">- Play Mode</span></h1>
-        <button class="help-btn" title="Show help">?</button>
-      </div>
-      
-      <div class="video-canvas">
-        <div class="canvas-content">
-          <div class="video-placeholder">Press a key to play video</div>
-          <div class="youtube-players"></div>
-          <div class="canvas-border"></div>
-          <div class="audio-visualizer">
-            <canvas id="visualizer-canvas" width="200" height="200"></canvas>
-          </div>
-        </div>
-      </div>
-      
-      <div class="virtual-keyboard">
-        ${virtualKeyboardHTML}
-      </div>
-      
-      <div class="controls-section">
-        <div class="instructions">
-          <div>Press keys to play clips • Space bar controls background music</div>
-        </div>
-        
-        <div class="playback-status">
-          <div class="background-status">Background: <span id="bg-status">stopped</span></div>
-        </div>
-      </div>
-      
-      <button class="edit-mode-btn">Back to Edit</button>
-      
-      <div class="creator-credits">
-        <div class="credits-text">Created by <strong>Diogo Neves</strong></div>
-        <div class="credits-links">
-          <a href="https://github.com/DiogoNeves/meme-machine" target="_blank" rel="noopener noreferrer" title="View source code on GitHub">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
-            </svg>
-            GitHub
-          </a>
-          <a href="https://www.youtube.com/@DiogoNeves" target="_blank" rel="noopener noreferrer" title="Check out my YouTube channel">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
-            </svg>
-            YouTube
-          </a>
-        </div>
-      </div>
-    </div>
-  `;
+let saveTimer = 0;
+function persist() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(flushSave, 250);
 }
 
-// Generate virtual keyboard
-function generateVirtualKeyboard(mappedClips) {
-  const keyboardRows = [
-    ['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'],
-    ['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L'],
-    ['Z', 'X', 'C', 'V', 'B', 'N', 'M']
-  ];
-  
-  const mappedKeys = new Set(mappedClips.map(clip => clip.key));
-  
-  return keyboardRows.map(row => 
-    `<div class="keyboard-row">
-      ${row.map(key => {
-        const isMapped = mappedKeys.has(key);
-        const clip = mappedClips.find(c => c.key === key);
-        return `
-          <div class="virtual-key ${isMapped ? 'mapped' : ''}" data-key="${key}">
-            <span class="key-letter">${key}</span>
-            ${isMapped ? `
-              <div class="key-info">
-                <div class="clip-name">${getClipName(clip.url)}</div>
-                <div class="timestamp-info">${clip.timestamp || '0:00'}</div>
-              </div>
-            ` : ''}
-  </div>
-        `;
-      }).join('')}
-    </div>`
-  ).join('');
+function flushSave() {
+  if (!saveTimer) return;
+  clearTimeout(saveTimer);
+  saveTimer = 0;
+  const pads = Object.fromEntries(Object.entries(state.pads).filter(([, pad]) => hasSource(pad) || pad.label));
+  if (!saveState({ pads, background: state.background, seenHelp: state.seenHelp })) {
+    toast("Couldn't save in this browser (private mode?). Your kit will reset on reload.", { tone: "warn" });
+  }
 }
 
-// Generate virtual keyboard for edit mode
-function generateVirtualKeyboardForEdit(clips) {
-  const keyboardRows = [
-    ['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'],
-    ['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L'],
-    ['Z', 'X', 'C', 'V', 'B', 'N', 'M']
-  ];
-  
-  const mappedKeys = {};
-  clips.forEach(clip => {
-    if (clip.key) {
-      mappedKeys[clip.key] = clip;
+function setPads(pads) {
+  state.pads = pads;
+  engine.sync(pads);
+  persist();
+  renderKeyboard();
+  renderStage();
+}
+
+function setPad(key, patch) {
+  const current = state.pads[key] ?? newPad(key, nextColour());
+  if ("url" in patch || "fileId" in patch) delete state.errors[key];
+  setPads({ ...state.pads, [key]: { ...current, ...patch } });
+}
+
+function removePad(key) {
+  const pad = state.pads[key];
+  if (!pad) return;
+  engine.stop(key);
+  const { [key]: _removed, ...rest } = state.pads;
+  if (state.selected === key) state.selected = null;
+  setPads(rest);
+  renderEditor();
+  syncPreview();
+  if (hasSource(pad)) {
+    toast(`Removed ${padTitle(pad)} from ${key}`, {
+      action: "Undo",
+      onAction: () => {
+        if (state.pads[key]) return toast(`${key} is already in use`, { tone: "warn" });
+        setPads({ ...state.pads, [key]: pad });
+        selectKey(key);
+      },
+      onExpire: cleanOrphanFiles,
+    });
+  }
+}
+
+function movePad(from, to) {
+  state.moving = null;
+  if (from === to || !state.pads[from]) return renderEditor();
+  const pads = { ...state.pads };
+  const target = pads[to];
+  pads[to] = { ...pads[from], key: to };
+  if (target) pads[from] = { ...target, key: from };
+  else delete pads[from];
+  engine.stop(from);
+  engine.stop(to);
+  setPads(pads);
+  state.selected = to;
+  renderAll();
+  syncPreview();
+  toast(target ? `Swapped ${from} and ${to}` : `Moved to ${to}`);
+}
+
+function nextColour() {
+  const used = Object.values(state.pads).map((pad) => pad.colour);
+  return [...COLOURS.keys()].sort((a, b) => used.filter((c) => c === a).length - used.filter((c) => c === b).length)[0];
+}
+
+const firstFreeKey = () => KEYS.find((key) => !hasSource(state.pads[key])) ?? null;
+
+function pruneEmpty(except) {
+  const pads = { ...state.pads };
+  let changed = false;
+  for (const [key, pad] of Object.entries(pads)) {
+    if (key !== except && !hasSource(pad) && !pad.label) {
+      delete pads[key];
+      changed = true;
     }
-  });
-  
-  return keyboardRows.map(row => 
-    `<div class="keyboard-row">
-      ${row.map(key => {
-        const isMapped = key in mappedKeys;
-        const clip = mappedKeys[key];
-        const isCurrentlyEditing = key === currentEditingKey;
-        return `
-          <div class="virtual-key-edit ${isMapped ? 'mapped' : ''} ${isCurrentlyEditing ? 'editing' : ''}" data-key="${key}">
-            <span class="key-letter">${key}</span>
-            ${isMapped && clip.url ? `
-              <div class="key-info">
-                <div class="clip-indicator">●</div>
-              </div>
-            ` : ''}
-          </div>
-        `;
-      }).join('')}
-    </div>`
-  ).join('');
+  }
+  if (changed) setPads(pads);
 }
 
-// Get short clip name from URL
-function getClipName(url) {
+function selectKey(key) {
+  if (state.mode !== "edit") return;
+  if (state.moving) return movePad(state.moving, key);
+  state.selected = state.selected === key ? null : key;
+  if (state.selected && !state.pads[key]) state.pads = { ...state.pads, [key]: newPad(key, nextColour()) };
+  pruneEmpty(state.selected);
+  renderAll();
+  syncPreview();
+  if (state.selected && matchMedia("(max-width: 899px)").matches) {
+    requestAnimationFrame(() => $("#editor").scrollIntoView({ behavior: "smooth", block: "nearest" }));
+  }
+}
+
+function setMode(mode) {
+  if (state.mode === mode) return;
+  state.mode = mode;
+  state.moving = null;
+  engine.stopAll();
+  pausePreview();
+  if (mode === "play") {
+    state.selected = null;
+    pruneEmpty();
+    // Must run inside this tap so mobile browsers allow scripted playback later.
+    engine.prime();
+    background.prime();
+  }
+  renderAll();
+  syncPreview();
+}
+
+async function cleanOrphanFiles() {
   try {
-    const videoId = extractYouTubeVideoId(url);
-    return videoId ? `${videoId.substring(0, 6)}...` : 'Clip';
+    const used = new Set([...Object.values(state.pads), state.background].map((source) => source?.fileId).filter(Boolean));
+    for (const id of await listFileIds()) if (!used.has(id)) forgetFile(id);
   } catch {
-    return 'Clip';
+    // IndexedDB unavailable; nothing stored.
   }
 }
 
-// Setup Play Mode
-function setupPlayMode() {
-  setupBackgroundAudio();
-  setupYouTubePlayers();
-  setupAudioVisualization();
+// ---------------------------------------------------------------------------
+// Rendering
+// ---------------------------------------------------------------------------
+
+function renderAll() {
+  document.body.dataset.mode = state.mode;
+  document.body.classList.toggle("editing", state.mode === "edit" && Boolean(state.selected));
+  $$(".mode-switch button").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.mode === state.mode)));
+  renderKeyboard();
+  renderEditor();
+  renderTransport();
+  renderStage();
 }
 
-// Setup background audio
-function setupBackgroundAudio() {
-  // Clear any existing background audio
-  if (backgroundAudioElement) {
-    backgroundAudioElement.pause();
-    backgroundAudioElement = null;
-  }
-  
-  if (backgroundYouTubePlayer) {
-    backgroundYouTubePlayer.destroy();
-    backgroundYouTubePlayer = null;
-  }
-  
-  // Setup audio file background
-  if (backgroundAudioFile && backgroundAudioFile.audioUrl) {
-    backgroundAudioElement = new Audio(backgroundAudioFile.audioUrl);
-    backgroundAudioElement.loop = true;
-    backgroundAudioElement.volume = 0.7; // Slightly lower volume for background
-    
-    backgroundAudioElement.addEventListener('play', () => {
-      updateBackgroundStatus('playing');
-    });
-    
-    backgroundAudioElement.addEventListener('pause', () => {
-      updateBackgroundStatus('paused');
-    });
-    
-    backgroundAudioElement.addEventListener('ended', () => {
-      updateBackgroundStatus('stopped');
-    });
-    
-    console.log('Background audio file ready');
-  }
-  // Setup YouTube background audio
-  else if (backgroundTrack && extractYouTubeVideoId(backgroundTrack)) {
-    setupBackgroundYouTubePlayer();
-  }
+function kindIcon(pad) {
+  if (pad.kind === "youtube") return icon("youtube", "key-kind");
+  if (pad.kind) return icon("wave", "key-kind");
+  return "";
 }
 
-// Setup background YouTube player
-function setupBackgroundYouTubePlayer() {
-  if (!isYouTubeAPIReady) {
-    console.log('YouTube API not ready for background player, retrying...');
-    // Retry after a short delay
-    setTimeout(setupBackgroundYouTubePlayer, 500);
-    return;
-  }
-  
-  const videoId = extractYouTubeVideoId(backgroundTrack);
-  if (!videoId) return;
-  
-  // Create hidden container for background player
-  let bgContainer = document.getElementById('background-youtube-player');
-  if (!bgContainer) {
-    bgContainer = document.createElement('div');
-    bgContainer.id = 'background-youtube-player';
-    bgContainer.style.cssText = 'position: absolute; top: -9999px; left: -9999px; width: 1px; height: 1px; opacity: 0; pointer-events: none;';
-    document.body.appendChild(bgContainer);
-  }
-  
-  // Create player div
-  const playerDiv = document.createElement('div');
-  playerDiv.id = 'bg-youtube-player';
-  bgContainer.innerHTML = '';
-  bgContainer.appendChild(playerDiv);
-  
-  backgroundYouTubePlayer = new YT.Player('bg-youtube-player', {
-    height: '1',
-    width: '1',
-    videoId: videoId,
-    playerVars: {
-      autoplay: 0,
-      controls: 0,
-      disablekb: 1,
-      fs: 0,
-      modestbranding: 1,
-      rel: 0,
-      loop: 1,
-      playlist: videoId // Required for loop to work
-    },
-    events: {
-      onReady: (event) => {
-        console.log('Background YouTube player ready');
-        // Set volume lower for background
-        event.target.setVolume(70);
-      },
-      onStateChange: (event) => {
-        if (event.data === YT.PlayerState.PLAYING) {
-          updateBackgroundStatus('playing');
-        } else if (event.data === YT.PlayerState.PAUSED) {
-          updateBackgroundStatus('paused');
-        } else if (event.data === YT.PlayerState.ENDED) {
-          updateBackgroundStatus('stopped');
-          // Auto-restart for loop
-          event.target.playVideo();
-        }
-      }
-    }
-  });
+function renderKeyboard() {
+  const play = state.mode === "play";
+  $("#keyboard").innerHTML = ROWS.map(
+    (row) => `<div class="krow">${row
+      .split("")
+      .map((key) => {
+        const pad = state.pads[key];
+        const mapped = hasSource(pad);
+        const classes = [
+          "key",
+          mapped && "mapped",
+          state.selected === key && "selected",
+          state.moving && "drop-target",
+          engine?.isActive(key) && "live",
+          state.errors[key] && "error",
+          pad?.mode === "oneshot" && "oneshot",
+        ].filter(Boolean);
+        const name = mapped ? padTitle(pad) : "";
+        const label = mapped ? `${key}: ${name}` : play ? `${key}: empty` : `${key}: empty, tap to add a sound`;
+        return `<button type="button" class="${classes.join(" ")}" data-key="${key}" style="--pad:${COLOURS[pad?.colour ?? 0]}"
+          aria-label="${esc(label)}" ${play ? 'tabindex="-1"' : `aria-pressed="${state.selected === key}"`} ${play && !mapped ? "disabled" : ""}>
+          <span class="cap">${key}</span>
+          ${mapped ? `<span class="name">${esc(name)}</span>${kindIcon(pad)}` : play ? "" : '<span class="plus" aria-hidden="true">+</span>'}
+        </button>`;
+      })
+      .join("")}</div>`,
+  ).join("");
 }
 
-// Setup YouTube players
-function setupYouTubePlayers() {
-  if (!isYouTubeAPIReady) {
-    console.log('YouTube API not ready yet');
-    return;
+function updateLiveKeys() {
+  for (const el of $$("#keyboard .key")) el.classList.toggle("live", engine.isActive(el.dataset.key));
+  const test = $("#editor [data-action=test]");
+  if (test && state.selected) {
+    const live = engine.isActive(state.selected);
+    test.innerHTML = `${icon(live ? "stop" : "play")}<span>${live ? "Stop" : "Test"}</span>`;
   }
-  
-  const playersContainer = document.querySelector('.youtube-players');
-  if (!playersContainer) return;
-  
-  // Clear existing players
-  youtubePlayers = {};
-  playersContainer.innerHTML = '';
-  
-  // Create players for clips with URLs
-  clips.forEach(clip => {
-    if (clip.url && clip.key) {
-      const videoId = extractYouTubeVideoId(clip.url);
-      if (videoId) {
-        createYouTubePlayer(clip.key, videoId, playersContainer);
-      }
-    }
-  });
+  renderNowPlaying();
 }
 
-// Create a YouTube player
-function createYouTubePlayer(key, videoId, container) {
-  const playerDiv = document.createElement('div');
-  playerDiv.id = `player-${key}`;
-  playerDiv.style.display = 'none';
-  container.appendChild(playerDiv);
-  
-  const player = new YT.Player(`player-${key}`, {
-    height: '100%',
-    width: '100%',
-    videoId: videoId,
-    playerVars: {
-      autoplay: 0,
-      controls: 0,
-      disablekb: 1,
-      fs: 0,
-      modestbranding: 1,
-      rel: 0
-    },
-    events: {
-      onReady: (event) => {
-        console.log(`Player ready for key: ${key}`);
-      },
-      onStateChange: (event) => {
-        if (event.data === YT.PlayerState.ENDED) {
-          stopClip(key);
-        }
-      }
-    }
-  });
-  
-  youtubePlayers[key] = player;
-}
-
-// Update background status
-function updateBackgroundStatus(status) {
-  const statusElement = document.getElementById('bg-status');
-  if (statusElement) {
-    statusElement.textContent = status;
-    statusElement.className = status;
+function renderNowPlaying() {
+  const pad = state.pads[state.lastKey];
+  const live = pad && engine.isActive(pad.key);
+  const box = $("#now-playing");
+  box.classList.toggle("show", Boolean(live));
+  box.classList.toggle("audio-only", Boolean(live && pad.kind !== "youtube"));
+  if (live) {
+    box.style.setProperty("--pad", COLOURS[pad.colour]);
+    box.innerHTML = `<span class="cap">${pad.key}</span><span class="np-title">${esc(padTitle(pad))}</span>`;
   }
 }
 
-// Play a clip (simplified without duration)
-function playClip(key) {
-  const clip = clips.find(c => c.key === key && c.url);
-  if (!clip || activeClips[key]) return;
-  
-  const player = youtubePlayers[key];
-  if (!player) return;
-  
-  const startTime = parseTimestamp(clip.timestamp);
-  
-  // Show and play the video
-  const playerDiv = document.getElementById(`player-${key}`);
-  if (playerDiv) {
-    // Hide placeholder with fade effect
-    const placeholder = document.querySelector('.video-placeholder');
-    if (placeholder) {
-      placeholder.style.opacity = '0';
-      setTimeout(() => placeholder.style.display = 'none', 300);
-    }
-    
-    // Show and play this video with fade in
-    playerDiv.style.display = 'block';
-    playerDiv.style.opacity = '0';
-    setTimeout(() => playerDiv.style.opacity = '1', 50);
-    
-    player.seekTo(startTime);
-    player.playVideo();
-    
-    activeClips[key] = true;
-    
-    // Update virtual keyboard
-    updateVirtualKey(key, true);
-    
-    console.log(`Playing clip ${key} from ${startTime}s`);
+function renderProgress(progress) {
+  for (const [key, value] of Object.entries(progress)) {
+    $(`#keyboard .key[data-key="${key}"]`)?.style.setProperty("--p", Math.min(1, value).toFixed(3));
   }
 }
 
-// Stop a clip
-function stopClip(key) {
-  const player = youtubePlayers[key];
-  if (!player || !activeClips[key]) return;
-  
-  // Stop the video
-  player.pauseVideo();
-  
-  // Hide the video with fade
-  const playerDiv = document.getElementById(`player-${key}`);
-  if (playerDiv) {
-    playerDiv.style.opacity = '0';
-    setTimeout(() => playerDiv.style.display = 'none', 300);
+function renderStage() {
+  const overlay = $("#overlay");
+  const pad = state.pads[state.selected];
+  const anyPads = Object.values(state.pads).some(hasSource);
+  const touch = isTouchOnly();
+  let html = "";
+
+  if (state.mode === "play") {
+    html = anyPads
+      ? `<p class="stage-big">${touch ? "Tap a pad" : "Press a key"}</p>
+         <p class="stage-sub">${touch ? "Hold pads to keep them playing" : "Hold to keep playing · <kbd>Space</kbd> background · <kbd>Esc</kbd> stop all"}</p>`
+      : `<p class="stage-big">No pads yet</p>
+         <p class="stage-sub">Switch to Edit and drop some sounds on the keys.</p>
+         <div class="stage-ctas"><button type="button" class="btn primary" data-mode="edit">${icon("pencil")}Start editing</button></div>`;
+  } else if (state.moving) {
+    html = `<p class="stage-big">Move ${esc(state.moving)}</p><p class="stage-sub">${touch ? "Tap" : "Press or click"} the key you want it on. <kbd>Esc</kbd> cancels.</p>`;
+  } else if (pad && !hasSource(pad)) {
+    html = `<p class="stage-big">Key ${pad.key}</p>
+      <p class="stage-sub">Paste a YouTube link, upload a file or grab a free sound.</p>
+      <div class="stage-ctas"><button type="button" class="btn primary" data-action="library">${icon("search")}Browse free sounds</button></div>`;
+  } else if (!pad) {
+    html = anyPads
+      ? `<p class="stage-big">Pick a key to edit</p><p class="stage-sub">Or hit <strong>Play</strong> when you're ready to perform.</p>`
+      : `<p class="stage-kicker">YouTube sampler</p>
+         <p class="stage-big">Turn any moment into a pad</p>
+         <p class="stage-sub">Map clips to your keyboard, then play them like an instrument.</p>
+         <div class="stage-ctas">
+           <button type="button" class="btn primary" data-action="library">${icon("search")}Free sounds</button>
+           <button type="button" class="btn" data-action="first-key">${icon("youtube")}Add a YouTube clip</button>
+         </div>`;
   }
-  
-  // Show placeholder if no other videos are playing
-  setTimeout(() => {
-    const hasActiveClips = Object.values(activeClips).some(active => active);
-    if (!hasActiveClips) {
-      const placeholder = document.querySelector('.video-placeholder');
-      if (placeholder) {
-        placeholder.style.display = 'block';
-        placeholder.style.opacity = '1';
-      }
-    }
-  }, 300);
-  
-  // Clear timeout and progress
-  if (clipTimeouts[key]) {
-    clearTimeout(clipTimeouts[key]);
-    delete clipTimeouts[key];
-  }
-  
-  if (clipProgressIntervals[key]) {
-    clearInterval(clipProgressIntervals[key]);
-    delete clipProgressIntervals[key];
-  }
-  
-  // Update virtual keyboard
-  updateVirtualKey(key, false);
-  
-  activeClips[key] = false;
-  
-  console.log(`Stopped clip ${key}`);
+  overlay.innerHTML = html;
+  overlay.hidden = !html;
+  renderNowPlaying();
 }
 
-// Toggle background audio
-function toggleBackgroundAudio() {
-  // Handle audio file background
-  if (backgroundAudioElement) {
-    if (backgroundAudioElement.paused) {
-      backgroundAudioElement.play().catch(e => {
-        console.error('Failed to play background audio:', e);
-      });
-    } else {
-      backgroundAudioElement.pause();
-    }
-  }
-  // Handle YouTube background
-  else if (backgroundYouTubePlayer) {
-    try {
-      const state = backgroundYouTubePlayer.getPlayerState();
-      if (state === YT.PlayerState.PLAYING) {
-        backgroundYouTubePlayer.pauseVideo();
-      } else {
-        backgroundYouTubePlayer.playVideo();
-      }
-    } catch (e) {
-      console.error('Failed to toggle background YouTube player:', e);
-    }
-  }
-}
-
-// Setup general event listeners
-function setupEventListeners() {
-  // Global keydown listener for key mapping
-  document.addEventListener('keydown', handleGlobalKeyDown);
-}
-
-// Handle global key presses (for key mapping and play mode)
-function handleGlobalKeyDown(e) {
-  if (currentMode === 'edit' && isListeningForKey && listeningClipIndex >= 0) {
-    handleKeyMapping(e);
-  } else if (currentMode === 'play') {
-    handlePlayModeKeyDown(e);
-  }
-}
-
-// Handle key mapping in edit mode
-function handleKeyMapping(e) {
-  const key = e.key.toUpperCase();
-  
-  // Only allow letter keys
-  if (key.length === 1 && key >= 'A' && key <= 'Z') {
-    // Check if key is already used by a different clip
-    const existingClipIndex = clips.findIndex(clip => clip.key === key);
-    if (existingClipIndex !== -1 && existingClipIndex !== listeningClipIndex) {
-      alert(`Key "${key}" is already mapped to another clip!`);
-      return;
-    }
-    
-    // Clear the key from any other clip that might have it (extra safety)
-    clips.forEach((clip, index) => {
-      if (index !== listeningClipIndex && clip.key === key) {
-        clip.key = '';
-      }
-    });
-    
-    // Map the key
-    if (listeningClipIndex >= 0 && listeningClipIndex < clips.length) {
-      clips[listeningClipIndex].key = key;
-      currentEditingKey = key; // Update current editing key
-    }
-    
-    // Stop listening
-    isListeningForKey = false;
-    listeningClipIndex = -1;
-    
-    // Save the new key mapping
-    saveToStorage();
-    
-    // Re-render to update UI
-    renderCurrentMode();
-  }
-}
-
-// Setup mode-specific event listeners
-function setupModeSpecificListeners() {
-  if (currentMode === 'edit') {
-    setupEditModeListeners();
-  } else {
-    setupPlayModeListeners();
-  }
-}
-
-// Setup Edit Mode event listeners
-function setupEditModeListeners() {
-  const playBtn = document.querySelector('.play-mode-btn');
-  const backgroundTrackInput = document.querySelector('.background-track');
-  const uploadBtn = document.querySelector('.upload-btn');
-  const helpBtn = document.querySelector('.help-btn');
-  const audioFileInput = document.querySelector('.audio-file-input');
-  const clearAudioBtn = document.querySelector('.clear-audio-btn');
-  const virtualKeys = document.querySelectorAll('.virtual-key-edit');
-  const remapBtn = document.querySelector('.remap-btn');
-  const doneEditingBtn = document.querySelector('.done-editing-btn');
-  const unmapKeyBtn = document.querySelector('.unmap-key-btn');
-  const setTimestampBtn = document.querySelector('.set-timestamp-btn');
-  
-  // Play button
-  if (playBtn) {
-    playBtn.addEventListener('click', () => {
-      validateUniqueKeys(); // Ensure no duplicates before playing
-      if (clips.some(c => c.url && c.key)) {
-        currentMode = 'play';
-        currentEditingKey = null; // Clear editing state
-        saveToStorage(); // Save current state before switching modes
-        renderCurrentMode();
-      }
-    });
-  }
-  
-  // Virtual keyboard keys
-  virtualKeys.forEach(key => {
-    key.addEventListener('click', (e) => {
-      const keyLetter = e.currentTarget.dataset.key;
-      if (keyLetter) {
-        // Toggle selection if clicking the same key
-        if (currentEditingKey === keyLetter) {
-          currentEditingKey = null;
-        } else {
-          // If this key already exists in clips, edit it; otherwise create new
-          let existingClip = clips.find(c => c.key === keyLetter);
-          if (!existingClip) {
-            existingClip = { key: keyLetter, url: '', timestamp: '' };
-            clips.push(existingClip);
-          }
-          currentEditingKey = keyLetter;
-        }
-        
-        saveToStorage();
-        renderCurrentMode();
-      }
-    });
-  });
-  
-  // Remap button
-  if (remapBtn) {
-    remapBtn.addEventListener('click', () => {
-      isListeningForKey = true;
-      // Store the current editing key as the one to remap
-      listeningClipIndex = clips.findIndex(c => c.key === currentEditingKey);
-      renderCurrentMode();
-    });
-  }
-  
-  // Done editing button
-  if (doneEditingBtn) {
-    doneEditingBtn.addEventListener('click', () => {
-      currentEditingKey = null;
-      saveToStorage();
-      renderCurrentMode();
-    });
-  }
-  
-  // Unmap key button
-  if (unmapKeyBtn) {
-    unmapKeyBtn.addEventListener('click', (e) => {
-      const key = e.target.dataset.key;
-      if (key) {
-        const clipIndex = clips.findIndex(c => c.key === key);
-        if (clipIndex !== -1) {
-          clips.splice(clipIndex, 1);
-          currentEditingKey = null;
-          saveToStorage();
-          renderCurrentMode();
-        }
-      }
-    });
-  }
-  
-  // Set timestamp button
-  if (setTimestampBtn) {
-    setTimestampBtn.addEventListener('click', (e) => {
-      const clipIndex = parseInt(e.target.dataset.clipIndex);
-      if (clipIndex >= 0 && previewPlayers.edit) {
-        setTimestampFromEditPreview(clipIndex);
-      }
-    });
-  }
-  
-  // Background track input
-  if (backgroundTrackInput) {
-    backgroundTrackInput.addEventListener('input', (e) => {
-      backgroundTrack = e.target.value;
-      
-      // If user enters a URL, clear any uploaded file
-      if (backgroundTrack.trim() && backgroundAudioFile) {
-        if (backgroundAudioFile.audioUrl) {
-          URL.revokeObjectURL(backgroundAudioFile.audioUrl);
-        }
-        backgroundAudioFile = null;
-      }
-      
-      // Validate YouTube URL if provided
-      if (backgroundTrack.trim()) {
-        validateYouTubeUrl(backgroundTrack, e.target);
-      } else {
-        e.target.classList.remove('valid', 'invalid');
-      }
-      
-      saveToStorage(); // Auto-save background track changes
-      
-      // Update UI to show/hide clear button
-      setTimeout(() => renderCurrentMode(), 100);
-    });
-  }
-  
-  // Upload button
-  if (uploadBtn) {
-    uploadBtn.addEventListener('click', () => {
-      audioFileInput.click();
-    });
-  }
-
-  // Help button
-  if (helpBtn) {
-    helpBtn.addEventListener('click', () => {
-      showHelpModal();
-    });
-  }
-
-  // Audio file input
-  if (audioFileInput) {
-    audioFileInput.addEventListener('change', (e) => {
-      const file = e.target.files[0];
-      if (file) {
-        handleAudioFileUpload(file);
-      }
-    });
-  }
-  
-  // Clear audio button
-  if (clearAudioBtn) {
-    clearAudioBtn.addEventListener('click', () => {
-      clearBackgroundAudio();
-    });
-  }
-  
-  // Handle inputs for the current editing clip
-  if (currentEditingKey) {
-    const clipIndex = clips.findIndex(c => c.key === currentEditingKey);
-    
-    // URL input
-    const urlInput = document.querySelector('.clip-url');
-    if (urlInput && clipIndex !== -1) {
-      urlInput.addEventListener('input', (e) => {
-        clips[clipIndex].url = e.target.value;
-        
-        // Validate YouTube URL
-        if (e.target.value) {
-          validateYouTubeUrl(e.target.value, e.target);
-        } else {
-          e.target.classList.remove('valid', 'invalid');
-        }
-        
-        // Update play button state
-        updatePlayButtonState();
-        
-        // Auto-save with debouncing
-        clearTimeout(window.saveTimeout);
-        window.saveTimeout = setTimeout(() => {
-          saveToStorage();
-          // Re-render to update preview
-          renderCurrentMode();
-        }, 1000);
-      });
-    }
-    
-    // Timestamp input
-    const timestampInput = document.querySelector('.timestamp');
-    if (timestampInput && clipIndex !== -1) {
-      timestampInput.addEventListener('input', (e) => {
-        clips[clipIndex].timestamp = e.target.value;
-        
-        // Validate timestamp
-        validateTimestampInput(e.target.value, clipIndex);
-        
-        // Auto-save with debouncing
-        clearTimeout(window.saveTimeout);
-        window.saveTimeout = setTimeout(() => {
-          saveToStorage();
-        }, 1000);
-      });
-    }
-  }
-  
-  // Handle keyboard input for key mapping
-  if (isListeningForKey) {
-    // This will be handled by the global key handler
-    const editHelp = document.querySelector('.edit-help-text');
-    if (editHelp) {
-      editHelp.innerHTML = '<div class="listening-message">Press any letter key to map it...</div>';
-    }
-  }
-}
-
-// Handle audio file upload
-function handleAudioFileUpload(file) {
-  // Validate file type
-  if (!file.type.startsWith('audio/')) {
-    alert('Please select a valid audio file.');
-    return;
-  }
-  
-  // Check file size (limit to 50MB for usage, 5MB for storage)
-  const maxSize = 50 * 1024 * 1024; // 50MB in bytes
-  if (file.size > maxSize) {
-    alert('File size is too large. Please select a file smaller than 50MB.');
-    return;
-  }
-  
-  // Store the file and update UI
-  backgroundAudioFile = file;
-  backgroundTrack = file.name;
-  
-  // Clear any YouTube URL input when uploading a file
-  const backgroundTrackInput = document.querySelector('.background-track');
-  if (backgroundTrackInput) {
-    backgroundTrackInput.classList.remove('valid', 'invalid');
-  }
-  
-  // Create audio URL for preview/playback
-  if (backgroundAudioFile.audioUrl) {
-    URL.revokeObjectURL(backgroundAudioFile.audioUrl);
-  }
-  backgroundAudioFile.audioUrl = URL.createObjectURL(file);
-  
-  // Show storage warning for large files
-  if (file.size > 5 * 1024 * 1024) {
-    console.warn('File larger than 5MB - will not be saved to localStorage');
-  }
-  
-  console.log('Background audio loaded:', file.name, 'Size:', (file.size / 1024 / 1024).toFixed(2) + 'MB');
-  
-  // Save to storage
-  saveToStorage();
-  
-  // Re-render to show the clear button and updated filename
-  renderCurrentMode();
-}
-
-// Clear background audio
-function clearBackgroundAudio() {
-  // Clean up audio file
-  if (backgroundAudioFile && backgroundAudioFile.audioUrl) {
-    URL.revokeObjectURL(backgroundAudioFile.audioUrl);
-  }
-  
-  // Clean up YouTube player
-  if (backgroundYouTubePlayer) {
-    backgroundYouTubePlayer.destroy();
-    backgroundYouTubePlayer = null;
-  }
-  
-  // Clean up audio element
-  if (backgroundAudioElement) {
-    backgroundAudioElement.pause();
-    backgroundAudioElement = null;
-  }
-  
-  backgroundAudioFile = null;
-  backgroundTrack = '';
-  
-  // Clear the file input
-  const audioFileInput = document.querySelector('.audio-file-input');
-  if (audioFileInput) {
-    audioFileInput.value = '';
-  }
-  
-  // Clear the URL input and its validation state
-  const backgroundTrackInput = document.querySelector('.background-track');
-  if (backgroundTrackInput) {
-    backgroundTrackInput.value = '';
-    backgroundTrackInput.classList.remove('valid', 'invalid');
-  }
-  
-  console.log('Background audio cleared');
-  
-  // Save to storage
-  saveToStorage();
-  
-  // Re-render to hide the clear button
-  renderCurrentMode();
-}
-
-// Validate YouTube URL
-function validateYouTubeUrl(url, input) {
-  const youtubeRegex = /^(https?:\/\/)?(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/;
-  const isValid = youtubeRegex.test(url);
-  
-  if (isValid) {
-    input.classList.remove('invalid');
-    input.classList.add('valid');
-  } else {
-    input.classList.remove('valid');
-    input.classList.add('invalid');
-  }
-}
-
-// Validate timestamp input and show UI feedback
-function validateTimestampInput(timestamp, clipIndex) {
-  const validation = validateTimestamp(timestamp);
-  const input = document.querySelector(`.timestamp[data-clip-index="${clipIndex}"]`);
-  const validationElement = document.getElementById(`timestamp-validation-${clipIndex}`);
-  
-  if (!input) return;
-  
-  // Update input styling
-  input.classList.remove('valid', 'invalid');
-  
-  if (validation.valid) {
-    if (timestamp && timestamp.trim() !== '') {
-      input.classList.add('valid');
-    }
-  } else {
-    input.classList.add('invalid');
-  }
-  
-  // Update validation message
-  if (validationElement) {
-    validationElement.textContent = validation.message;
-    validationElement.className = `timestamp-validation ${validation.valid ? 'valid' : 'invalid'}`;
-  }
-}
-
-// Update play button state
-function updatePlayButtonState() {
-  const playBtn = document.querySelector('.play-mode-btn');
-  if (playBtn) {
-    const hasValidClips = clips.some(c => c.url && c.key);
-    playBtn.disabled = !hasValidClips;
-  }
-}
-
-// Setup Play Mode event listeners
-function setupPlayModeListeners() {
-  const editBtn = document.querySelector('.edit-mode-btn');
-  const virtualKeys = document.querySelectorAll('.virtual-key');
-  
-  if (editBtn) {
-    editBtn.addEventListener('click', () => {
-      // Stop all active clips and background audio
-      Object.keys(activeClips).forEach(key => stopClip(key));
-      if (backgroundAudioElement) {
-        backgroundAudioElement.pause();
-      }
-      if (backgroundYouTubePlayer) {
-        backgroundYouTubePlayer.pauseVideo();
-      }
-      
-      currentMode = 'edit';
-      saveToStorage(); // Save current state before switching modes
-      renderCurrentMode();
-    });
-  }
-  
-  // Add click listeners to virtual keys in play mode
-  virtualKeys.forEach(key => {
-    const keyLetter = key.dataset.key;
-    if (keyLetter) {
-      // Mouse down - start playing
-      key.addEventListener('mousedown', (e) => {
-        e.preventDefault();
-        const clip = clips.find(c => c.key === keyLetter && c.url);
-        if (clip && !activeClips[keyLetter]) {
-          playClip(keyLetter);
-        }
-      });
-      
-      // Mouse up - stop playing
-      key.addEventListener('mouseup', (e) => {
-        e.preventDefault();
-        const clip = clips.find(c => c.key === keyLetter && c.url);
-        if (clip && activeClips[keyLetter]) {
-          stopClip(keyLetter);
-        }
-      });
-      
-      // Mouse leave - also stop playing (in case user drags mouse off)
-      key.addEventListener('mouseleave', (e) => {
-        const clip = clips.find(c => c.key === keyLetter && c.url);
-        if (clip && activeClips[keyLetter]) {
-          stopClip(keyLetter);
-        }
-      });
-      
-      // Prevent context menu on right click
-      key.addEventListener('contextmenu', (e) => {
-        e.preventDefault();
-      });
-    }
-  });
-  
-  // Add keyup listener for play mode
-  document.addEventListener('keyup', handlePlayModeKeyUp);
-}
-
-// Handle key press in play mode
-function handlePlayModeKeyDown(e) {
-  if (currentMode !== 'play') return;
-  
-  const key = e.key.toUpperCase();
-  const clip = clips.find(c => c.key === key && c.url);
-  
-  if (clip && !activeClips[key]) {
-    playClip(key);
-  }
-  
-  if (e.key === ' ') {
-    e.preventDefault(); // Prevent page scroll
-    toggleBackgroundAudio();
-  }
-}
-
-// Handle key release in play mode
-function handlePlayModeKeyUp(e) {
-  if (currentMode !== 'play') return;
-  
-  const key = e.key.toUpperCase();
-  const clip = clips.find(c => c.key === key && c.url);
-  
-  if (clip && activeClips[key]) {
-    stopClip(key);
-  }
-}
-
-// Validate that no duplicate keys exist (called when adding/removing clips)
-function validateUniqueKeys() {
-  const usedKeys = new Set();
-  const duplicates = [];
-  
-  clips.forEach((clip, index) => {
-    if (clip.key && usedKeys.has(clip.key)) {
-      duplicates.push({ index, key: clip.key });
-    } else if (clip.key) {
-      usedKeys.add(clip.key);
-    }
-  });
-  
-  // Clear duplicate keys (keep first occurrence)
-  duplicates.forEach(({ index }) => {
-    clips[index].key = '';
-  });
-  
-  return duplicates.length === 0;
-}
-
-// Setup audio visualization
-function setupAudioVisualization() {
-  try {
-    audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    audioAnalyser = audioContext.createAnalyser();
-    audioAnalyser.fftSize = 256;
-    audioDataArray = new Uint8Array(audioAnalyser.frequencyBinCount);
-    
-    if (backgroundAudioElement) {
-      const source = audioContext.createMediaElementSource(backgroundAudioElement);
-      source.connect(audioAnalyser);
-      audioAnalyser.connect(audioContext.destination);
-    }
-    
-    startVisualization();
-  } catch (error) {
-    console.log('Audio visualization not available:', error);
-  }
-}
-
-// Start audio visualization
-function startVisualization() {
-  const canvas = document.getElementById('visualizer-canvas');
-  if (!canvas || !audioAnalyser) return;
-  
-  const ctx = canvas.getContext('2d');
-  const centerX = canvas.width / 2;
-  const centerY = canvas.height / 2;
-  const radius = 60;
-  
-  function animate() {
-    if (!audioAnalyser) return;
-    
-    audioAnalyser.getByteFrequencyData(audioDataArray);
-    
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    
-    // Draw circular visualizer
-    const barCount = 32;
-    const angleStep = (Math.PI * 2) / barCount;
-    
-    for (let i = 0; i < barCount; i++) {
-      const value = audioDataArray[i] || 0;
-      const height = (value / 255) * 40;
-      const angle = i * angleStep;
-      
-      const x1 = centerX + Math.cos(angle) * radius;
-      const y1 = centerY + Math.sin(angle) * radius;
-      const x2 = centerX + Math.cos(angle) * (radius + height);
-      const y2 = centerY + Math.sin(angle) * (radius + height);
-      
-      ctx.strokeStyle = `hsl(${(i * 10) % 360}, 70%, 60%)`;
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.moveTo(x1, y1);
-      ctx.lineTo(x2, y2);
-      ctx.stroke();
-    }
-    
-    // Update canvas border based on audio
-    const avgVolume = audioDataArray.reduce((a, b) => a + b, 0) / audioDataArray.length;
-    updateCanvasBorder(avgVolume);
-    
-    requestAnimationFrame(animate);
-  }
-  
-  animate();
-}
-
-// Update canvas border based on audio
-function updateCanvasBorder(volume) {
-  const border = document.querySelector('.canvas-border');
-  if (border) {
-    const intensity = Math.min(volume / 128, 1);
-    const hue = (intensity * 120) + 240; // Blue to purple range
-    border.style.boxShadow = `inset 0 0 ${20 + intensity * 30}px rgba(${Math.floor(intensity * 255)}, 100, 255, 0.6)`;
-    border.style.borderColor = `hsl(${hue}, 70%, 60%)`;
-  }
-}
-
-
-
-// Update virtual key visual state
-function updateVirtualKey(key, isActive) {
-  const virtualKey = document.querySelector(`.virtual-key[data-key="${key}"]`);
-  if (virtualKey) {
-    if (isActive) {
-      virtualKey.classList.add('active');
-    } else {
-      virtualKey.classList.remove('active');
-      // Reset progress ring
-      const progressFill = virtualKey.querySelector('.progress-fill');
-      if (progressFill) {
-        progressFill.style.transform = 'rotate(0deg)';
-      }
-    }
-  }
-}
-
-// Start progress indicator for a clip
-function startProgressIndicator(key, duration) {
-  const virtualKey = document.querySelector(`.virtual-key[data-key="${key}"]`);
-  const progressFill = virtualKey?.querySelector('.progress-fill');
-  
-  if (!progressFill) return;
-  
-  const startTime = Date.now();
-  const durationMs = duration * 1000;
-  
-  clipProgressIntervals[key] = setInterval(() => {
-    const elapsed = Date.now() - startTime;
-    const progress = Math.min(elapsed / durationMs, 1);
-    const degrees = progress * 360;
-    
-    progressFill.style.transform = `rotate(${degrees}deg)`;
-    
-    if (progress >= 1) {
-      clearInterval(clipProgressIntervals[key]);
-      delete clipProgressIntervals[key];
-    }
-  }, 50);
-}
-
-
-
-// Save data to localStorage
-function saveToStorage() {
-  try {
-    // Save clips data
-    localStorage.setItem(STORAGE_KEYS.clips, JSON.stringify(clips));
-    
-    // Save background track name/URL
-    localStorage.setItem(STORAGE_KEYS.backgroundTrack, backgroundTrack);
-    
-    // Save background audio filename
-    if (backgroundAudioFile) {
-      localStorage.setItem(STORAGE_KEYS.backgroundAudioName, backgroundAudioFile.name);
-      
-      // For small files, save the actual audio data as base64
-      if (backgroundAudioFile.size <= 5 * 1024 * 1024) { // 5MB limit for localStorage
-        const reader = new FileReader();
-        reader.onload = function(e) {
-          try {
-            localStorage.setItem(STORAGE_KEYS.backgroundAudioData, e.target.result);
-            console.log('Background audio saved to localStorage');
-          } catch (error) {
-            console.warn('Failed to save audio data - file too large:', error);
-            localStorage.removeItem(STORAGE_KEYS.backgroundAudioData);
-          }
-        };
-        reader.readAsDataURL(backgroundAudioFile);
-      } else {
-        // File too large for localStorage
-        localStorage.removeItem(STORAGE_KEYS.backgroundAudioData);
-        console.warn('Background audio file too large for localStorage (>5MB)');
-      }
-    } else {
-      // No audio file, clear stored data
-      localStorage.removeItem(STORAGE_KEYS.backgroundAudioName);
-      localStorage.removeItem(STORAGE_KEYS.backgroundAudioData);
-    }
-    
-    // Save general settings
-    const settings = {
-      currentMode: currentMode,
-      lastSaved: Date.now()
-    };
-    localStorage.setItem(STORAGE_KEYS.settings, JSON.stringify(settings));
-    
-    console.log('Settings saved to localStorage');
-  } catch (error) {
-    console.error('Failed to save to localStorage:', error);
-  }
-}
-
-// Load data from localStorage (updated to handle missing duration)
-function loadFromStorage() {
-  try {
-    // Load clips data
-    const savedClips = localStorage.getItem(STORAGE_KEYS.clips);
-    if (savedClips) {
-      const parsedClips = JSON.parse(savedClips);
-      if (Array.isArray(parsedClips) && parsedClips.length > 0) {
-        // Remove duration field from old saved data
-        clips = parsedClips.map(clip => ({
-          key: clip.key || '',
-          url: clip.url || '',
-          timestamp: clip.timestamp || ''
-        }));
-      }
-    }
-    
-    // Load background track
-    const savedBackgroundTrack = localStorage.getItem(STORAGE_KEYS.backgroundTrack);
-    if (savedBackgroundTrack) {
-      backgroundTrack = savedBackgroundTrack;
-    }
-    
-    // Load background audio data
-    const savedAudioName = localStorage.getItem(STORAGE_KEYS.backgroundAudioName);
-    const savedAudioData = localStorage.getItem(STORAGE_KEYS.backgroundAudioData);
-    
-    if (savedAudioName && savedAudioData) {
-      // Recreate the audio file from base64 data
-      fetch(savedAudioData)
-        .then(res => res.blob())
-        .then(blob => {
-          // Create a File object from the blob
-          backgroundAudioFile = new File([blob], savedAudioName, { type: blob.type });
-          backgroundAudioFile.audioUrl = URL.createObjectURL(blob);
-          backgroundTrack = savedAudioName;
-          
-          console.log('Background audio restored from localStorage:', savedAudioName);
-          
-          // Re-render if we're in edit mode to show the restored audio
-          if (currentMode === 'edit') {
-            renderCurrentMode();
-          }
-        })
-        .catch(error => {
-          console.error('Failed to restore background audio:', error);
-          // Clear invalid data
-          localStorage.removeItem(STORAGE_KEYS.backgroundAudioName);
-          localStorage.removeItem(STORAGE_KEYS.backgroundAudioData);
-        });
-    } else if (savedAudioName) {
-      // Name saved but no data - likely file was too large
-      backgroundTrack = savedAudioName + ' (file too large - please re-upload)';
-    }
-    
-    // Load general settings
-    const savedSettings = localStorage.getItem(STORAGE_KEYS.settings);
-    if (savedSettings) {
-      const settings = JSON.parse(savedSettings);
-      // Could restore currentMode here, but better to always start in edit mode
-      console.log('Last saved:', new Date(settings.lastSaved).toLocaleString());
-    }
-    
-    console.log('Settings loaded from localStorage');
-  } catch (error) {
-    console.error('Failed to load from localStorage:', error);
-    // Reset to defaults if loading fails
-    clips = [{ key: 'A', url: '', timestamp: '' }];
-    backgroundTrack = '';
-    backgroundAudioFile = null;
-  }
-}
-
-// Clear all stored data
-function clearStorage() {
-  try {
-    Object.values(STORAGE_KEYS).forEach(key => {
-      localStorage.removeItem(key);
-    });
-    console.log('All stored data cleared');
-  } catch (error) {
-    console.error('Failed to clear storage:', error);
-  }
-}
-
-// Get storage usage info
-function getStorageInfo() {
-  try {
-    let totalSize = 0;
-    const info = {};
-    
-    Object.entries(STORAGE_KEYS).forEach(([name, key]) => {
-      const value = localStorage.getItem(key);
-      const size = value ? new Blob([value]).size : 0;
-      info[name] = {
-        size: size,
-        sizeKB: Math.round(size / 1024 * 100) / 100,
-        exists: !!value
-      };
-      totalSize += size;
-    });
-    
-    info.total = {
-      size: totalSize,
-      sizeKB: Math.round(totalSize / 1024 * 100) / 100,
-      sizeMB: Math.round(totalSize / 1024 / 1024 * 100) / 100
-    };
-    
-    return info;
-  } catch (error) {
-    console.error('Failed to get storage info:', error);
-    return null;
-  }
-}
-
-// Add console commands for debugging storage and testing time parser
-window.memeMachineStorage = {
-  save: saveToStorage,
-  load: loadFromStorage,
-  clear: clearStorage,
-  info: getStorageInfo,
-  export: () => {
-    const data = {
-      clips: clips,
-      backgroundTrack: backgroundTrack,
-      backgroundAudioName: backgroundAudioFile?.name || null,
-      timestamp: new Date().toISOString()
-    };
-    console.log('Exported data:', data);
-    return data;
-  }
-};
-
-// Add console command for testing time parser
-window.testTimeParser = (timestamp) => {
-  const validation = validateTimestamp(timestamp);
-  const parsed = parseTimestamp(timestamp);
-  const examples = getLocalizedExamples();
-  
-  console.log(`Input: "${timestamp}"`);
-  console.log(`Parsed: ${parsed} seconds`);
-  console.log(`Formatted: ${formatTime(parsed)}`);
-  console.log(`Valid: ${validation.valid}`);
-  console.log(`Message: ${validation.message}`);
-  console.log(`Local decimal separator: "${examples.decimal}"`);
-  console.log(`Try these local formats: ${examples.timeWithDecimal}, ${examples.secondsWithDecimal}`);
-  
-  return { input: timestamp, parsed, formatted: formatTime(parsed), validation, examples };
-};
-
-// Setup Edit Mode
-function setupEditMode() {
-  // Clear any preview players from previous mode
-  previewPlayers = {};
-  
-  // If there's a current editing key, setup the preview player
-  if (currentEditingKey) {
-    setupEditPreviewPlayer();
-  }
-}
-
-// Setup preview player for the current editing key
-function setupEditPreviewPlayer() {
-  if (!isYouTubeAPIReady || !currentEditingKey) return;
-  
-  const clip = clips.find(c => c.key === currentEditingKey);
-  if (!clip || !clip.url) return;
-  
-  const videoId = extractYouTubeVideoId(clip.url);
-  if (!videoId) return;
-  
-  const playerContainer = document.getElementById('edit-preview-player');
-  if (!playerContainer) return;
-  
-  // Clear existing player
-  if (previewPlayers.edit) {
-    previewPlayers.edit.destroy();
-    delete previewPlayers.edit;
-  }
-  
-  // Create new player
-  previewPlayers.edit = new YT.Player('edit-preview-player', {
-    height: '240',
-    width: '100%',
-    videoId: videoId,
-    playerVars: {
-      autoplay: 0,
-      controls: 1,
-      disablekb: 0,
-      fs: 1,
-      modestbranding: 1,
-      rel: 0,
-      start: parseTimestamp(clip.timestamp) || 0
-    },
-    events: {
-      onReady: (event) => {
-        console.log(`Edit preview player ready for key ${currentEditingKey}`);
-        // Start time updater
-        const clipIndex = clips.indexOf(clip);
-        startEditTimeUpdater(clipIndex, previewPlayers.edit);
-      },
-      onStateChange: (event) => {
-        // Update timestamp display when user seeks
-        if (event.data === YT.PlayerState.PLAYING || event.data === YT.PlayerState.PAUSED) {
-          const clipIndex = clips.indexOf(clip);
-          updateCurrentTimeDisplay(clipIndex, previewPlayers.edit);
-        }
-      }
-    }
-  });
-}
-
-// Start time updater for edit preview
-function startEditTimeUpdater(clipIndex, player) {
-  if (window.editTimeUpdaterInterval) {
-    clearInterval(window.editTimeUpdaterInterval);
-  }
-  
-  window.editTimeUpdaterInterval = setInterval(() => {
-    if (player && player.getCurrentTime) {
-      updateCurrentTimeDisplay(clipIndex, player);
-    }
-  }, 500);
-}
-
-// Setup preview players for edit mode
-function setupPreviewPlayers() {
-  if (!isYouTubeAPIReady) {
-    console.log('YouTube API not ready for previews yet');
-    return;
-  }
-  
-  // Clear existing preview players
-  Object.values(previewPlayers).forEach(player => {
-    if (player && player.destroy) {
-      player.destroy();
-    }
-  });
-  previewPlayers = {};
-  
-  // Create preview players for clips with URLs
-  clips.forEach((clip, index) => {
-    if (clip.url) {
-      const videoId = extractYouTubeVideoId(clip.url);
-      if (videoId) {
-        createPreviewPlayer(index, videoId);
-      }
-    }
-  });
-}
-
-// Create a preview player for edit mode
-function createPreviewPlayer(clipIndex, videoId) {
-  const playerContainer = document.getElementById(`preview-player-${clipIndex}`);
-  if (!playerContainer) return;
-  
-  const player = new YT.Player(`preview-player-${clipIndex}`, {
-    height: '200',
-    width: '100%',
-    videoId: videoId,
-    playerVars: {
-      autoplay: 0,
-      controls: 1,
-      disablekb: 0,
-      fs: 0,
-      modestbranding: 1,
-      rel: 0,
-      start: parseTimestamp(clips[clipIndex].timestamp) || 0
-    },
-    events: {
-      onReady: (event) => {
-        console.log(`Preview player ready for clip ${clipIndex}`);
-        startTimeUpdater(clipIndex, player);
-      },
-      onStateChange: (event) => {
-        // Update timestamp display when user seeks
-        if (event.data === YT.PlayerState.PLAYING || event.data === YT.PlayerState.PAUSED) {
-          updateCurrentTimeDisplay(clipIndex, player);
-        }
-      }
-    }
-  });
-  
-  previewPlayers[clipIndex] = player;
-}
-
-// Start time updater for preview player
-function startTimeUpdater(clipIndex, player) {
-  const updateTime = () => {
-    if (player && player.getCurrentTime) {
-      updateCurrentTimeDisplay(clipIndex, player);
-    }
-  };
-  
-  // Update every 500ms
-  setInterval(updateTime, 500);
-}
-
-// Update current time display
-function updateCurrentTimeDisplay(clipIndex, player) {
-  try {
-    const currentTime = player.getCurrentTime();
-    const setTimeBtn = document.getElementById(`set-time-btn-${clipIndex}`);
-    if (setTimeBtn && currentTime !== undefined) {
-      setTimeBtn.textContent = `set to ${formatTime(currentTime)}`;
-    }
-  } catch (error) {
-    // Ignore errors when player is not ready
-  }
-}
-
-// Format seconds to MM:SS
-function formatTime(seconds) {
-  const mins = Math.floor(seconds / 60);
-  const secs = Math.floor(seconds % 60);
-  return `${mins}:${secs.toString().padStart(2, '0')}`;
-}
-
-// Set timestamp from preview player
-function setTimestampFromPreview(clipIndex) {
-  const player = previewPlayers[clipIndex];
-  if (player && player.getCurrentTime) {
-    try {
-      const currentTime = player.getCurrentTime();
-      const formattedTime = formatTime(currentTime);
-      
-      // Update the clip data
-      clips[clipIndex].timestamp = formattedTime;
-      
-      // Update the input field
-      const timestampInput = document.querySelector(`.timestamp[data-clip-index="${clipIndex}"]`);
-      if (timestampInput) {
-        timestampInput.value = formattedTime;
-      }
-      
-      // Save to storage
-      saveToStorage();
-      
-      console.log(`Timestamp set to ${formattedTime} for clip ${clipIndex}`);
-    } catch (error) {
-      console.error('Failed to set timestamp:', error);
-    }
-  }
-}
-
-// Set timestamp from edit preview player
-function setTimestampFromEditPreview(clipIndex) {
-  const player = previewPlayers.edit;
-  if (player && player.getCurrentTime && clipIndex >= 0) {
-    try {
-      const currentTime = player.getCurrentTime();
-      const formattedTime = formatTime(currentTime);
-      
-      // Update the clip data
-      clips[clipIndex].timestamp = formattedTime;
-      
-      // Update the input field
-      const timestampInput = document.querySelector('.timestamp');
-      if (timestampInput) {
-        timestampInput.value = formattedTime;
-        // Trigger validation
-        validateTimestampInput(formattedTime, clipIndex);
-      }
-      
-      // Save to storage
-      saveToStorage();
-      
-      console.log(`Timestamp set to ${formattedTime} for clip ${clipIndex}`);
-    } catch (error) {
-      console.error('Failed to set timestamp:', error);
-    }
-  }
-}
-
-
-
-// Check if this is the first visit and show help modal
-function checkFirstVisit() {
-  const hasVisited = localStorage.getItem(STORAGE_KEYS.firstVisit);
-  if (!hasVisited) {
-    showHelpModal();
-    localStorage.setItem(STORAGE_KEYS.firstVisit, 'true');
-  }
-}
-
-// Show help modal
-function showHelpModal() {
-  const modal = createHelpModal();
-  document.body.appendChild(modal);
-  
-  // Focus the modal for accessibility
-  setTimeout(() => {
-    const closeBtn = modal.querySelector('.help-modal-close');
-    if (closeBtn) closeBtn.focus();
-  }, 100);
-}
-
-// Create help modal HTML
-function createHelpModal() {
-  const modal = document.createElement('div');
-  modal.className = 'help-modal-overlay';
-  modal.innerHTML = `
-    <div class="help-modal">
-      <div class="help-modal-header">
-        <h2>Welcome to Meme Machine!</h2>
-        <button class="help-modal-close" title="Close help">×</button>
-      </div>
-      <div class="help-modal-content">
-        <div class="help-section">
-          <h3>🎵 Background Audio / Beat (Optional)</h3>
-          <p>Add background music that will loop while you play clips:</p>
-          <p>• Paste a <strong>YouTube URL</strong> for music videos or beats</p>
-          <p>• Or click <strong>"📁"</strong> to upload your own audio file</p>
-          <p>This is completely optional but adds atmosphere to your meme sessions!</p>
-        </div>
-        
-        <div class="help-section">
-          <h3>🎬 Mapping Video Clips</h3>
-          <p>1. Click on any key on the <strong>virtual keyboard</strong> to select it</p>
-          <p>2. Add a <strong>YouTube URL</strong> in the main editor area</p>
-          <p>3. Set a <strong>timestamp</strong> to start from a specific moment</p>
-          <p>4. Use <strong>"Set Current Time"</strong> to capture the exact timestamp from the preview</p>
-          <p>5. Click <strong>"Done"</strong> when finished or select another key to edit</p>
-        </div>
-        
-        <div class="help-section">
-          <h3>🎮 Playing Your Memes</h3>
-          <p>1. Click <strong>"Play Mode"</strong> to start performing</p>
-          <p>2. Press any mapped key to play that video clip</p>
-          <p>3. Press <strong>Space</strong> to start/stop background music</p>
-          <p>4. Release the key to stop the clip immediately</p>
-        </div>
-        
-        <div class="help-section">
-          <h3>💡 Pro Tips</h3>
-          <p>• Use timestamps to skip intros: "0:15" or "15"</p>
-          <p>• Green dots on keys show mapped clips</p>
-          <p>• Click <strong>"Change Key"</strong> to remap to a different letter</p>
-          <p>• Your settings are automatically saved</p>
-          <p>• Background audio can be a YouTube URL or uploaded file</p>
-        </div>
-        
-        <div class="help-section">
-          <h3>⌨️ Timestamp Formats</h3>
-          <p>All of these work: <code>1:30</code>, <code>90</code>, <code>90.5</code>, <code>1m30s</code></p>
-        </div>
-      </div>
-      <div class="help-modal-footer">
-        <button class="help-modal-got-it">Got it! Let's start</button>
-      </div>
-    </div>
+function renderTransport() {
+  const bg = state.background;
+  const name = bg ? bg.label || bg.credit?.title || (bg.kind === "file" ? bg.fileName : bg.kind === "youtube" ? "YouTube track" : "Audio track") : "";
+  $("#transport").innerHTML = `
+    <button type="button" class="bg-toggle ${background?.playing ? "on" : ""}" data-action="bg-toggle" ${bg ? "" : "disabled"}
+      aria-label="${background?.playing ? "Pause" : "Play"} background track">
+      ${icon(background?.playing ? "pause" : "play")}
+    </button>
+    <button type="button" class="bg-info" data-action="bg-settings">
+      <span class="bg-label">${icon("music")}Background</span>
+      <span class="bg-name">${bg ? esc(name) : "None. Tap to add a loop"}</span>
+    </button>
+    ${bg ? `<input type="range" class="bg-volume" min="0" max="100" value="${Math.round(bg.volume * 100)}" aria-label="Background volume">` : ""}
+    <button type="button" class="btn stop-all" data-action="stop-all" title="Stop everything (Esc)">${icon("stop")}<span class="hide-sm">Stop</span></button>
   `;
-  
-  // Add event listeners
-  const closeBtn = modal.querySelector('.help-modal-close');
-  const gotItBtn = modal.querySelector('.help-modal-got-it');
-  const overlay = modal;
-  
-  const closeModal = () => {
-    document.body.removeChild(modal);
-  };
-  
-  closeBtn.addEventListener('click', closeModal);
-  gotItBtn.addEventListener('click', closeModal);
-  
-  // Close on overlay click (but not on modal content click)
-  overlay.addEventListener('click', (e) => {
-    if (e.target === overlay) {
-      closeModal();
-    }
-  });
-  
-  // Close on Escape key
-  const handleEscape = (e) => {
-    if (e.key === 'Escape') {
-      closeModal();
-      document.removeEventListener('keydown', handleEscape);
-    }
-  };
-  document.addEventListener('keydown', handleEscape);
-  
-  return modal;
 }
 
-// Start the app
+function sourceHint(pad) {
+  if (state.errors[pad.key]) return `<span class="bad">${esc(state.errors[pad.key])}</span>`;
+  if (pad.kind === "file") return `${icon("check")} Uploaded file · <strong>${esc(pad.fileName)}</strong> (stays in this browser)`;
+  if (pad.credit) {
+    const c = pad.credit;
+    return `${icon("check")} “${esc(c.title)}” by ${esc(c.author)} · <a href="${esc(c.page)}" target="_blank" rel="noopener noreferrer">${esc(c.licence)}</a>`;
+  }
+  if (pad.kind === "youtube") return `${icon("check")} YouTube video`;
+  if (pad.kind === "audio") return `${icon("check")} Audio link`;
+  return "YouTube link, direct audio link (https), or a free sound from the library.";
+}
+
+function renderEditor() {
+  const editor = $("#editor");
+  const pad = state.pads[state.selected];
+  if (state.mode !== "edit") return void (editor.innerHTML = "");
+  if (!pad) {
+    const count = Object.values(state.pads).filter(hasSource).length;
+    editor.innerHTML = `
+      <div class="panel empty-panel">
+        <h2>Your kit</h2>
+        <p>${count ? `${count} of ${KEYS.length} keys loaded.` : "No sounds yet."} ${isTouchOnly() ? "Tap" : "Click or press"} a key to edit it.</p>
+        <ul class="tips">
+          <li>${icon("youtube")}<span>Paste any YouTube link, then scrub to the moment and hit <strong>Set</strong>.</span></li>
+          <li>${icon("search")}<span>Grab free, properly licensed sounds from the <button type="button" class="link" data-action="library">library</button>.</span></li>
+          <li>${icon("link")}<span><button type="button" class="link" data-action="kit">Share your kit</button> as a link.</span></li>
+        </ul>
+      </div>`;
+    return;
+  }
+
+  const colour = COLOURS[pad.colour];
+  editor.innerHTML = `
+    <div class="panel" style="--pad:${colour}">
+      <div class="editor-head">
+        <span class="cap big">${pad.key}</span>
+        <input class="label-input" id="pad-label" maxlength="60" placeholder="Name this pad" value="${esc(pad.label)}" aria-label="Pad name" autocomplete="off">
+        <button type="button" class="icon-btn" data-action="deselect" aria-label="Close editor">${icon("close")}</button>
+      </div>
+
+      <div class="field">
+        <label for="pad-source">Sound</label>
+        <input id="pad-source" type="url" inputmode="url" autocomplete="off" spellcheck="false"
+          placeholder="https://youtu.be/…" value="${esc(pad.kind === "file" ? "" : pad.url)}">
+        <p class="hint" id="source-hint">${sourceHint(pad)}</p>
+        <div class="row">
+          <button type="button" class="btn small" data-action="library">${icon("search")}Free sounds</button>
+          <button type="button" class="btn small" data-action="upload">${icon("upload")}Upload</button>
+        </div>
+      </div>
+
+      <div class="times">
+        ${timeField("start", "Start", pad.start)}
+        ${timeField("end", "End", pad.end, "optional")}
+      </div>
+      <p class="hint" id="time-hint">Scrub the preview, then hit <strong>Set</strong>. Formats: 1:23.5, 83.5, 1m23s</p>
+
+      <div class="field">
+        <span class="label">When the pad is released</span>
+        <div class="segmented" role="radiogroup" aria-label="Playback mode">
+          <button type="button" role="radio" data-pmode="hold" aria-checked="${pad.mode === "hold"}">Stop</button>
+          <button type="button" role="radio" data-pmode="oneshot" aria-checked="${pad.mode === "oneshot"}">Keep playing</button>
+        </div>
+      </div>
+
+      <div class="field split">
+        <label for="pad-volume">Volume</label>
+        <input id="pad-volume" type="range" min="0" max="100" value="${Math.round(pad.volume * 100)}">
+      </div>
+
+      <div class="field split">
+        <span class="label">Colour</span>
+        <div class="swatches" role="radiogroup" aria-label="Pad colour">
+          ${COLOURS.map((c, i) => `<button type="button" role="radio" class="swatch" style="--c:${c}" data-colour="${i}" aria-checked="${i === pad.colour}" aria-label="Colour ${i + 1}"></button>`).join("")}
+        </div>
+      </div>
+
+      <div class="editor-foot">
+        <button type="button" class="btn primary" data-action="test" ${hasSource(pad) ? "" : "disabled"}>${icon("play")}<span>Test</span></button>
+        <button type="button" class="btn" data-action="move" ${hasSource(pad) ? "" : "disabled"}>${icon("move")}<span>Move</span></button>
+        <button type="button" class="btn danger" data-action="remove">${icon("trash")}<span>Remove</span></button>
+      </div>
+    </div>`;
+  bindEditorInputs(pad.key);
+  updateLiveKeys();
+}
+
+function timeField(name, label, value, note = "") {
+  return `<div class="field">
+    <label for="pad-${name}">${label}${note ? ` <small>${note}</small>` : ""}</label>
+    <div class="input-group">
+      <input id="pad-${name}" data-time="${name}" inputmode="decimal" autocomplete="off" placeholder="${name === "start" ? "0:00" : "end of clip"}" value="${value == null ? "" : formatTime(value)}">
+      <button type="button" class="btn small" data-set-time="${name}" title="Use the preview's current time">Set</button>
+    </div>
+  </div>`;
+}
+
+// ---------------------------------------------------------------------------
+// Editor behaviour
+// ---------------------------------------------------------------------------
+
+function bindEditorInputs(key) {
+  const label = $("#pad-label");
+  label.addEventListener("input", () => {
+    setPad(key, { label: label.value.trim().slice(0, 60) });
+  });
+
+  const source = $("#pad-source");
+  let timer = 0;
+  const apply = () => {
+    clearTimeout(timer);
+    applySource(key, source.value);
+  };
+  source.addEventListener("input", () => {
+    clearTimeout(timer);
+    timer = setTimeout(apply, 500);
+  });
+  source.addEventListener("change", apply);
+  source.addEventListener("paste", () => setTimeout(apply));
+
+  for (const input of $$("[data-time]")) {
+    input.addEventListener("input", () => input.classList.toggle("invalid", Number.isNaN(parseTime(input.value))));
+    input.addEventListener("change", () => commitTime(key, input));
+    input.addEventListener("keydown", (event) => event.key === "Enter" && input.blur());
+  }
+
+  $("#pad-volume").addEventListener("input", (event) => setPad(key, { volume: Number(event.target.value) / 100 }));
+}
+
+function applySource(key, value) {
+  const pad = state.pads[key];
+  if (!pad) return;
+  const hint = $("#source-hint");
+  const text = value.trim();
+  if (!text) {
+    if (pad.kind && pad.kind !== "file") {
+      engine.stop(key);
+      setPad(key, { kind: null, url: "", videoId: null, credit: null });
+      renderEditor();
+      syncPreview();
+    }
+    return;
+  }
+  const described = describeSource(text);
+  if (!described) {
+    hint.innerHTML = `<span class="bad">${
+      /^http:/i.test(text)
+        ? "Use an https:// link. Browsers block insecure audio on this page."
+        : "That doesn't look like a YouTube link or an https:// audio link."
+    }</span>`;
+    return;
+  }
+  if (described.kind === pad.kind && described.url === pad.url) return;
+  // A new sound gets fresh timings (a YouTube ?t= link supplies its own start).
+  const patch = { kind: described.kind, url: described.url, videoId: described.videoId ?? null, fileId: "", fileName: "", credit: null, start: described.start ?? null, end: null };
+  engine.stop(key);
+  setPad(key, patch);
+  renderEditor();
+  syncPreview();
+  cleanOrphanFiles();
+}
+
+function commitTime(key, input) {
+  const pad = state.pads[key];
+  const value = parseTime(input.value);
+  const hint = $("#time-hint");
+  if (Number.isNaN(value)) {
+    input.classList.add("invalid");
+    hint.innerHTML = `<span class="bad">Couldn't read “${esc(input.value)}”. Try 1:23.5, 83.5 or 1m23s.</span>`;
+    return;
+  }
+  const next = { ...pad, [input.dataset.time]: value };
+  if (next.end != null && next.end <= (next.start ?? 0)) {
+    input.classList.add("invalid");
+    hint.innerHTML = `<span class="bad">The end needs to be after the start (${formatTime(next.start ?? 0)}).</span>`;
+    return;
+  }
+  input.classList.remove("invalid");
+  input.value = value == null ? "" : formatTime(value);
+  hint.innerHTML = clipLength(next);
+  setPad(key, { [input.dataset.time]: value });
+}
+
+function clipLength(pad) {
+  return pad.end != null ? `Clip length: <strong>${formatTime(pad.end - (pad.start ?? 0))}</strong>` : "Plays from the start until you release (or the video ends).";
+}
+
+function setTimeFromPreview(which) {
+  const key = state.selected;
+  const time = previewTime();
+  if (time == null) return toast("Load a sound first, then scrub the preview to the right moment.", { tone: "warn" });
+  const input = $(`#pad-${which}`);
+  input.value = formatTime(time);
+  commitTime(key, input);
+}
+
+async function uploadFile(file, target) {
+  if (!file) return;
+  if (!/^(audio|video)\//.test(file.type) && !/\.(mp3|m4a|wav|ogg|opus|flac|aac|webm|mp4)$/i.test(file.name)) {
+    return toast("That doesn't look like an audio file.", { tone: "warn" });
+  }
+  if (file.size > MAX_UPLOAD) return toast("That file is over 40 MB. Try a shorter clip.", { tone: "warn" });
+  const fileId = newFileId();
+  try {
+    await putFile(fileId, file, file.name);
+  } catch {
+    return toast("This browser wouldn't store the file (private mode?).", { tone: "warn" });
+  }
+  const source = { kind: "file", fileId, fileName: file.name.slice(0, 200), url: "", videoId: null, credit: null };
+  if (target.type === "background") {
+    setBackground(normaliseBackground({ ...source, volume: state.background?.volume ?? 1 }));
+  } else {
+    const pad = state.pads[target.key];
+    engine.stop(target.key);
+    setPad(target.key, { ...source, start: null, end: null, label: pad?.label || file.name.replace(/\.[a-z0-9]+$/i, "").slice(0, 60) });
+    renderEditor();
+    syncPreview();
+  }
+  cleanOrphanFiles();
+}
+
+let uploadTarget = null;
+function pickFile(target) {
+  uploadTarget = target;
+  const input = $("#file-input");
+  input.value = "";
+  input.click();
+}
+
+// ---------------------------------------------------------------------------
+// Edit preview (YouTube player with controls, or a native audio player)
+// ---------------------------------------------------------------------------
+
+const preview = { player: null, ready: false, videoId: null, creating: null };
+
+function ensurePreviewPlayer(videoId, start) {
+  preview.creating ??= loadYouTubeAPI().then(
+    (YT) =>
+      new Promise((resolve) => {
+        preview.videoId = videoId;
+        preview.player = new YT.Player("preview-yt", {
+          width: "100%",
+          height: "100%",
+          videoId,
+          playerVars: { playsinline: 1, rel: 0, iv_load_policy: 3, start: Math.floor(start ?? 0) },
+          events: {
+            onReady: () => {
+              preview.ready = true;
+              resolve(preview.player);
+              autoLabelFromPreview();
+            },
+            onStateChange: () => autoLabelFromPreview(),
+            onError: (event) => {
+              const key = state.selected;
+              if (key && state.pads[key]?.videoId === preview.videoId) {
+                state.errors[key] = ERROR_MESSAGES[event.data] ?? ERROR_MESSAGES[5];
+                renderKeyboard();
+                const hint = $("#source-hint");
+                if (hint) hint.innerHTML = sourceHint(state.pads[key]);
+              }
+            },
+          },
+        });
+      }),
+  );
+  return preview.creating;
+}
+
+function autoLabelFromPreview() {
+  const key = state.selected;
+  const pad = state.pads[key];
+  if (!pad || pad.kind !== "youtube" || pad.label || !preview.ready) return;
+  const data = preview.player.getVideoData?.();
+  if (!data?.title || data.video_id !== pad.videoId) return;
+  const label = data.title.slice(0, 60);
+  setPad(key, { label });
+  const input = $("#pad-label");
+  if (input && document.activeElement !== input && !input.value) input.value = label;
+}
+
+async function syncPreview() {
+  const box = $("#preview");
+  const pad = state.mode === "edit" ? state.pads[state.selected] : null;
+  const kind = pad?.kind ?? "";
+  box.dataset.kind = kind;
+  const audio = $("#preview-audio");
+
+  if (kind !== "youtube" && preview.ready) preview.player.pauseVideo();
+  if (kind !== "audio" && kind !== "file") {
+    audio.pause();
+    audio.removeAttribute("src");
+  }
+
+  if (kind === "youtube") {
+    try {
+      const player = await ensurePreviewPlayer(pad.videoId, pad.start);
+      const current = state.mode === "edit" ? state.pads[state.selected] : null;
+      if (current?.videoId !== pad.videoId) return;
+      if (preview.videoId !== pad.videoId) {
+        preview.videoId = pad.videoId;
+        player.cueVideoById({ videoId: pad.videoId, startSeconds: pad.start ?? 0 });
+      }
+    } catch {
+      toast(ERROR_MESSAGES.api, { tone: "warn" });
+    }
+  } else if (kind === "audio" || kind === "file") {
+    $("#preview-audio-title").textContent = padTitle(pad);
+    try {
+      const src = kind === "file" ? await fileUrl(pad.fileId) : pad.url;
+      if (audio.getAttribute("src") !== src) {
+        audio.src = src;
+        audio.addEventListener("loadedmetadata", () => (audio.currentTime = pad.start ?? 0), { once: true });
+      }
+    } catch {
+      state.errors[pad.key] = "The uploaded file is missing from this browser. Upload it again.";
+      renderKeyboard();
+    }
+  }
+}
+
+function previewTime() {
+  const kind = $("#preview").dataset.kind;
+  if (kind === "youtube" && preview.ready) return Math.round(preview.player.getCurrentTime() * 100) / 100;
+  if (kind === "audio" || kind === "file") return Math.round($("#preview-audio").currentTime * 100) / 100;
+  return null;
+}
+
+function pausePreview() {
+  if (preview.ready) preview.player.pauseVideo();
+  $("#preview-audio")?.pause();
+}
+
+// ---------------------------------------------------------------------------
+// Background track
+// ---------------------------------------------------------------------------
+
+function setBackground(source) {
+  state.background = source;
+  background.set(source);
+  persist();
+  renderTransport();
+  if (source && $("#dialog").open && $("#dialog").dataset.kind === "background") openBackgroundDialog();
+}
+
+function openBackgroundDialog() {
+  const bg = state.background;
+  openDialog({
+    kind: "background",
+    title: "Background track",
+    body: `
+      <p class="muted">A loop that plays under your pads. Toggle it with the play button${isTouchOnly() ? "" : " or <kbd>Space</kbd> in Play mode"}.</p>
+      <div class="field">
+        <label for="bg-source">YouTube or audio link</label>
+        <input id="bg-source" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://youtu.be/…"
+          value="${esc(bg && bg.kind !== "file" ? bg.url : "")}">
+        <p class="hint" id="bg-hint">${bg ? `${icon("check")} ${esc(bg.kind === "file" ? `Uploaded file · ${bg.fileName}` : bg.credit ? `“${bg.credit.title}” by ${bg.credit.author} · ${bg.credit.licence}` : bg.kind === "youtube" ? "YouTube video" : "Audio link")}` : "Nothing set yet."}</p>
+      </div>
+      <div class="row">
+        <button type="button" class="btn" data-action="bg-library">${icon("search")}Free sounds</button>
+        <button type="button" class="btn" data-action="bg-upload">${icon("upload")}Upload</button>
+        ${bg ? `<button type="button" class="btn danger" data-action="bg-clear">${icon("trash")}Remove</button>` : ""}
+      </div>`,
+    setup(dialog) {
+      const input = $("#bg-source", dialog);
+      input.addEventListener("change", () => {
+        const text = input.value.trim();
+        if (!text) return;
+        const described = describeSource(text);
+        if (!described) {
+          $("#bg-hint", dialog).innerHTML = `<span class="bad">Paste a YouTube link or an https:// audio link.</span>`;
+          return;
+        }
+        setBackground(normaliseBackground({ ...described, volume: state.background?.volume ?? 1 }));
+        cleanOrphanFiles();
+      });
+      dialog.addEventListener("click", (event) => {
+        const action = event.target.closest("[data-action]")?.dataset.action;
+        if (action === "bg-library") openLibrary({ type: "background" });
+        if (action === "bg-upload") pickFile({ type: "background" });
+        if (action === "bg-clear") {
+          setBackground(null);
+          cleanOrphanFiles();
+          closeDialog();
+        }
+      });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Dialogs, toasts
+// ---------------------------------------------------------------------------
+
+let dialogCleanup = null;
+
+function openDialog({ kind, title, body, setup, onClose }) {
+  closeDialog();
+  const dialog = $("#dialog");
+  dialog.dataset.kind = kind;
+  dialog.innerHTML = `
+    <div class="dialog-inner">
+      <div class="dialog-head">
+        <h2>${title}</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Close">${icon("close")}</button>
+      </div>
+      <div class="dialog-body">${body}</div>
+    </div>`;
+  dialogCleanup = onClose ?? null;
+  // Listeners go on the inner wrapper, which is replaced each time, so they never pile up.
+  setup?.($(".dialog-inner", dialog));
+  dialog.showModal();
+  dialog.scrollTop = 0;
+}
+
+function closeDialog() {
+  const dialog = $("#dialog");
+  dialogCleanup?.();
+  dialogCleanup = null;
+  if (dialog.open) dialog.close();
+}
+
+let toastId = 0;
+function toast(message, { action, onAction, onExpire, tone = "info", timeout = action ? 6000 : 3500 } = {}) {
+  const id = ++toastId;
+  const el = document.createElement("div");
+  el.className = `toast ${tone}`;
+  el.innerHTML = `<span>${esc(message)}</span>${action ? `<button type="button">${esc(action)}</button>` : ""}`;
+  const dismiss = () => {
+    el.classList.add("out");
+    setTimeout(() => el.remove(), 250);
+  };
+  el.querySelector("button")?.addEventListener("click", () => {
+    onAction?.();
+    onExpire = null;
+    dismiss();
+  });
+  $("#toasts").append(el);
+  setTimeout(() => {
+    onExpire?.();
+    dismiss();
+  }, timeout);
+  return id;
+}
+
+// ---------------------------------------------------------------------------
+// Library
+// ---------------------------------------------------------------------------
+
+function openLibrary(target) {
+  const libTarget = target ?? (state.selected ? { type: "pad", key: state.selected } : null);
+  const audio = new Audio();
+  let controller = null;
+  let playingId = null;
+
+  const destination =
+    libTarget?.type === "background"
+      ? "Pick a loop for the background."
+      : libTarget?.key
+        ? `Adding to key <span class="cap inline">${libTarget.key}</span>`
+        : "Sounds go onto the next free key.";
+
+  openDialog({
+    kind: "library",
+    title: "Free sound library",
+    body: `
+      <p class="muted">${destination} Everything here comes from <a href="https://commons.wikimedia.org/" target="_blank" rel="noopener noreferrer">Wikimedia Commons</a> and is free to use. Credits are saved with each pad.</p>
+      <form class="search" role="search">
+        <input type="search" name="q" placeholder="Search sounds…" aria-label="Search sounds" autocomplete="off" enterkeyhint="search">
+        <button type="submit" class="btn primary">${icon("search")}<span class="hide-sm">Search</span></button>
+      </form>
+      <div class="chips">${SUGGESTIONS.map((s) => `<button type="button" class="chip" data-q="${esc(s)}">${esc(s)}</button>`).join("")}</div>
+      <ul class="results" id="results" aria-live="polite"></ul>
+      <details class="more-sources">
+        <summary>More free libraries</summary>
+        <ul>${MORE_SOURCES.map((s) => `<li><a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.name)}${icon("external", "icon tiny")}</a><span>${esc(s.note)}</span></li>`).join("")}</ul>
+      </details>`,
+    onClose() {
+      controller?.abort();
+      audio.pause();
+      audio.removeAttribute("src");
+    },
+    setup(dialog) {
+      const results = $("#results", dialog);
+      const form = $("form", dialog);
+      let sounds = [];
+
+      const run = async (query) => {
+        if (!query.trim()) return;
+        form.q.value = query;
+        controller?.abort();
+        controller = new AbortController();
+        results.innerHTML = `<li class="status"><span class="spinner"></span>Searching…</li>`;
+        try {
+          sounds = await searchSounds(query, { signal: controller.signal });
+          results.innerHTML = sounds.length
+            ? sounds.map(resultRow).join("")
+            : `<li class="status">Nothing found for “${esc(query)}”. Try a simpler word.</li>`;
+        } catch (error) {
+          if (error.name === "AbortError") return;
+          results.innerHTML = `<li class="status bad">Couldn't reach Wikimedia Commons. Check your connection and try again.</li>`;
+        }
+      };
+
+      const resultRow = (sound) => `
+        <li class="result" data-id="${sound.id}">
+          <button type="button" class="icon-btn round" data-preview="${sound.id}" aria-label="Preview ${esc(sound.title)}">${icon("play")}</button>
+          <div class="result-text">
+            <strong>${esc(sound.title)}</strong>
+            <span>${esc(sound.credit.author)} · <a href="${esc(sound.credit.page)}" target="_blank" rel="noopener noreferrer">${esc(sound.credit.licence)}</a>${sound.duration ? ` · ${formatTime(sound.duration)}` : ""}</span>
+          </div>
+          <button type="button" class="btn small primary" data-use="${sound.id}">Use</button>
+        </li>`;
+
+      const setPreviewIcon = (id, playing) => {
+        const button = $(`[data-preview="${id}"]`, dialog);
+        if (button) button.innerHTML = icon(playing ? "stop" : "play");
+      };
+      audio.addEventListener("ended", () => {
+        setPreviewIcon(playingId, false);
+        playingId = null;
+      });
+
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        run(form.q.value);
+      });
+      dialog.addEventListener("click", (event) => {
+        const chip = event.target.closest("[data-q]");
+        if (chip) return run(chip.dataset.q);
+
+        const previewButton = event.target.closest("[data-preview]");
+        if (previewButton) {
+          const id = Number(previewButton.dataset.preview);
+          const sound = sounds.find((s) => s.id === id);
+          if (playingId !== null) setPreviewIcon(playingId, false);
+          if (playingId === id) {
+            audio.pause();
+            playingId = null;
+            return;
+          }
+          playingId = id;
+          audio.src = sound.src;
+          audio.play().catch(() => toast("Couldn't play that preview.", { tone: "warn" }));
+          setPreviewIcon(id, true);
+          return;
+        }
+
+        const use = event.target.closest("[data-use]");
+        if (use) {
+          const sound = sounds.find((s) => s.id === Number(use.dataset.use));
+          if (sound) useSound(sound, libTarget);
+        }
+      });
+
+      run(SUGGESTIONS[0]);
+      if (!isTouchOnly()) form.q.focus();
+    },
+  });
+}
+
+function useSound(sound, target) {
+  const source = { url: sound.src, label: sound.title.slice(0, 60), credit: sound.credit };
+  if (target?.type === "background") {
+    setBackground(normaliseBackground({ ...source, volume: state.background?.volume ?? 1 }));
+    closeDialog();
+    cleanOrphanFiles();
+    return toast(`Background set to “${sound.title}”`);
+  }
+  const key = target?.key ?? firstFreeKey();
+  if (!key) return toast("Every key is taken. Remove a pad first.", { tone: "warn" });
+  const described = describeSource(sound.src);
+  engine.stop(key);
+  setPad(key, { ...source, kind: described.kind, videoId: null, fileId: "", fileName: "", start: null, end: null });
+  closeDialog();
+  if (state.mode !== "edit") setMode("edit");
+  state.selected = key;
+  renderAll();
+  syncPreview();
+  cleanOrphanFiles();
+  toast(`Added “${sound.title}” to ${key}`);
+}
+
+// ---------------------------------------------------------------------------
+// Sharing and help
+// ---------------------------------------------------------------------------
+
+function kitLink() {
+  return `${location.origin}${location.pathname}#kit=${encodeKit(state)}`;
+}
+
+function openKitDialog() {
+  const pads = Object.values(state.pads).filter(hasSource);
+  const uploads = pads.filter((pad) => pad.kind === "file").length + (state.background?.kind === "file" ? 1 : 0);
+  const shareable = pads.length - pads.filter((pad) => pad.kind === "file").length;
+  openDialog({
+    kind: "kit",
+    title: "Share your kit",
+    body: `
+      ${shareable
+        ? `<p class="muted">Anyone with this link gets your pads, timings and colours.</p>
+           <div class="input-group">
+             <input id="kit-link" readonly value="${esc(kitLink())}" aria-label="Share link">
+             <button type="button" class="btn primary" data-action="copy">${icon("copy")}Copy</button>
+           </div>
+           ${uploads ? `<p class="hint">${uploads} uploaded file${uploads > 1 ? "s aren't" : " isn't"} included. Uploads stay in this browser.</p>` : ""}`
+        : `<p class="muted">Add some YouTube or library sounds first, then share them with a link.</p>`}
+      <hr>
+      <h3>Start over</h3>
+      <p class="muted">Clears every pad and the background track on this device.</p>
+      <button type="button" class="btn danger" data-action="reset" ${pads.length || state.background ? "" : "disabled"}>${icon("trash")}Clear kit</button>`,
+    setup(dialog) {
+      dialog.addEventListener("click", async (event) => {
+        const action = event.target.closest("[data-action]")?.dataset.action;
+        if (action === "copy") {
+          const input = $("#kit-link", dialog);
+          try {
+            await navigator.clipboard.writeText(input.value);
+            toast("Link copied");
+          } catch {
+            input.select();
+            toast("Select the link and copy it", { tone: "warn" });
+          }
+        }
+        if (action === "reset") {
+          if (!confirm("Clear every pad and the background track?")) return;
+          engine.stopAll();
+          state.selected = null;
+          setPads({});
+          setBackground(null);
+          cleanOrphanFiles();
+          renderAll();
+          syncPreview();
+          closeDialog();
+          toast("Kit cleared");
+        }
+      });
+    },
+  });
+}
+
+function readSharedKit() {
+  const match = location.hash.match(/^#kit=([\w-]+)$/);
+  if (!match) return null;
+  history.replaceState(null, "", location.pathname + location.search);
+  const kit = decodeKit(match[1]);
+  if (!kit) toast("That share link looks broken.", { tone: "warn" });
+  return kit;
+}
+
+function loadKit(kit) {
+  engine.stopAll();
+  state.selected = null;
+  setPads(kit.pads);
+  if (kit.background) setBackground(kit.background);
+  cleanOrphanFiles();
+  renderAll();
+  syncPreview();
+  toast(`Loaded ${Object.keys(kit.pads).length} pads`);
+}
+
+function offerSharedKit(kit) {
+  const count = Object.keys(kit.pads).length;
+  const mine = Object.values(state.pads).filter(hasSource).length;
+  if (!mine) return loadKit(kit);
+  openDialog({
+    kind: "shared",
+    title: "Load shared kit?",
+    body: `
+      <p class="muted">This link has <strong>${count} pad${count === 1 ? "" : "s"}</strong>${kit.background ? " and a background track" : ""}. Loading it replaces your current ${mine} pad${mine === 1 ? "" : "s"}.</p>
+      <div class="row end">
+        <button type="button" class="btn" data-close>Keep mine</button>
+        <button type="button" class="btn primary" data-action="load">Load kit</button>
+      </div>`,
+    setup(dialog) {
+      $("[data-action=load]", dialog).addEventListener("click", () => {
+        closeDialog();
+        loadKit(kit);
+      });
+    },
+  });
+}
+
+function openHelp() {
+  const credits = [...Object.values(state.pads), state.background].filter((source) => source?.credit);
+  openDialog({
+    kind: "help",
+    title: "How it works",
+    onClose() {
+      if (!state.seenHelp) {
+        state.seenHelp = true;
+        persist();
+      }
+    },
+    body: `
+      <ol class="steps">
+        <li><span class="step-n">1</span><div><strong>Pick a key</strong><p>In <em>Edit</em>, ${isTouchOnly() ? "tap" : "click (or press)"} any key on the keyboard.</p></div></li>
+        <li><span class="step-n">2</span><div><strong>Give it a sound</strong><p>Paste a YouTube link, upload audio, or grab a free sound from the library.</p></div></li>
+        <li><span class="step-n">3</span><div><strong>Find the moment</strong><p>Scrub the preview and hit <em>Set</em> for the start (and optionally the end).</p></div></li>
+        <li><span class="step-n">4</span><div><strong>Perform</strong><p>Switch to <em>Play</em>. Hold keys or pads to play clips; let go to stop. Choose <em>Keep playing</em> for clips that should run to the end.</p></div></li>
+      </ol>
+      <div class="help-grid">
+        <div><h3>Keyboard</h3><p><kbd>A</kbd>–<kbd>Z</kbd> play pads<br><kbd>Space</kbd> background on/off<br><kbd>Esc</kbd> stop everything</p></div>
+        <div><h3>On a phone</h3><p>Tap <em>Play</em> first, then use several fingers at once. Turn off silent mode on iPhone to hear sound.</p></div>
+      </div>
+      <p class="muted small">Everything is saved in this browser. Respect creators: credit the sounds you use and check each licence before publishing.</p>
+      ${credits.length
+        ? `<h3>Credits for this kit</h3><ul class="credits">${credits
+            .map((s) => `<li>“${esc(s.credit.title)}” by ${esc(s.credit.author)} · <a href="${esc(s.credit.page)}" target="_blank" rel="noopener noreferrer">${esc(s.credit.licence)}</a></li>`)
+            .join("")}</ul>`
+        : ""}
+      <div class="row end"><button type="button" class="btn primary" data-close>Let's go</button></div>`,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Input
+// ---------------------------------------------------------------------------
+
+const heldKeys = new Set();
+const pointers = new Map();
+
+const isTyping = (el) => el instanceof HTMLElement && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
+
+function letterFrom(event) {
+  if (/^[a-z]$/i.test(event.key)) return event.key.toUpperCase();
+  // Non-Latin layouts: fall back to the physical key position.
+  const code = event.code?.match(/^Key([A-Z])$/)?.[1];
+  return event.key.length === 1 && code ? code : null;
+}
+
+function trigger(key) {
+  if (!hasSource(state.pads[key])) return;
+  state.lastKey = key;
+  engine.trigger(key);
+}
+
+function onKeyDown(event) {
+  if (event.metaKey || event.ctrlKey || event.altKey || $("#dialog").open || isTyping(event.target)) return;
+  const key = letterFrom(event);
+  if (state.mode === "play") {
+    if (event.code === "Space") {
+      event.preventDefault();
+      if (!event.repeat) toggleBackground();
+    } else if (event.key === "Escape") {
+      stopEverything();
+    } else if (key && hasSource(state.pads[key])) {
+      event.preventDefault();
+      if (!event.repeat && !heldKeys.has(key)) {
+        heldKeys.add(key);
+        trigger(key);
+      }
+    }
+    return;
+  }
+  if (event.key === "Escape") {
+    if (state.moving) {
+      state.moving = null;
+      renderAll();
+    } else if (state.selected) {
+      selectKey(state.selected);
+    }
+  } else if (key && !event.repeat) {
+    event.preventDefault();
+    selectKey(key);
+  }
+}
+
+function onKeyUp(event) {
+  const key = letterFrom(event);
+  if (key && heldKeys.delete(key)) engine.release(key);
+}
+
+function releaseAll() {
+  for (const key of heldKeys) engine.release(key);
+  heldKeys.clear();
+  for (const key of pointers.values()) engine.release(key);
+  pointers.clear();
+}
+
+function toggleBackground() {
+  if (!state.background) return openBackgroundDialog();
+  background.toggle();
+}
+
+function stopEverything() {
+  engine.stopAll();
+  background.pause();
+}
+
+function bindEvents() {
+  document.addEventListener("keydown", onKeyDown);
+  document.addEventListener("keyup", onKeyUp);
+  window.addEventListener("blur", releaseAll);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) return;
+    releaseAll();
+    flushSave();
+  });
+  window.addEventListener("pagehide", flushSave);
+
+  document.addEventListener("click", (event) => {
+    const modeButton = event.target.closest("button[data-mode]");
+    if (modeButton) return setMode(modeButton.dataset.mode);
+    if (event.target.closest("[data-close]")) return closeDialog();
+
+    const keyButton = event.target.closest("#keyboard .key");
+    if (keyButton && state.mode === "edit") return selectKey(keyButton.dataset.key);
+
+    const pmode = event.target.closest("[data-pmode]");
+    if (pmode && state.selected) {
+      setPad(state.selected, { mode: pmode.dataset.pmode });
+      return renderEditor();
+    }
+    const swatch = event.target.closest("[data-colour]");
+    if (swatch && state.selected) {
+      setPad(state.selected, { colour: Number(swatch.dataset.colour) });
+      return renderEditor();
+    }
+    const setTime = event.target.closest("[data-set-time]");
+    if (setTime) return setTimeFromPreview(setTime.dataset.setTime);
+
+    const action = event.target.closest("[data-action]")?.dataset.action;
+    switch (action) {
+      case "library":
+        return openLibrary();
+      case "kit":
+        return openKitDialog();
+      case "help":
+        return openHelp();
+      case "first-key":
+        return selectKey(firstFreeKey() ?? "A");
+      case "deselect":
+        return selectKey(state.selected);
+      case "upload":
+        return pickFile({ type: "pad", key: state.selected });
+      case "remove":
+        return removePad(state.selected);
+      case "move":
+        state.moving = state.selected;
+        renderAll();
+        return;
+      case "test": {
+        const key = state.selected;
+        if (engine.isActive(key)) return engine.stop(key);
+        pausePreview();
+        state.lastKey = key;
+        return engine.trigger(key, { latch: true });
+      }
+      case "bg-toggle":
+        return toggleBackground();
+      case "bg-settings":
+        return openBackgroundDialog();
+      case "stop-all":
+        return stopEverything();
+    }
+  });
+
+  document.addEventListener("input", (event) => {
+    if (!event.target.matches(".bg-volume") || !state.background) return;
+    state.background = { ...state.background, volume: Number(event.target.value) / 100 };
+    background.setVolume(state.background.volume);
+    persist();
+  });
+
+  $("#file-input").addEventListener("change", (event) => {
+    if (uploadTarget) uploadFile(event.target.files[0], uploadTarget);
+  });
+
+  // Close dialogs by clicking the backdrop.
+  $("#dialog").addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) closeDialog();
+  });
+  $("#dialog").addEventListener("cancel", (event) => {
+    event.preventDefault();
+    closeDialog();
+  });
+
+  // Pads: pointer events give us multi-touch and press-and-hold on phones.
+  const keyboard = $("#keyboard");
+  keyboard.addEventListener("pointerdown", (event) => {
+    if (state.mode !== "play" || (event.pointerType === "mouse" && event.button !== 0)) return;
+    const el = event.target.closest(".key.mapped");
+    if (!el) return;
+    event.preventDefault();
+    try {
+      el.setPointerCapture(event.pointerId);
+    } catch {
+      // Synthetic or already-released pointer; the press still counts.
+    }
+    pointers.set(event.pointerId, el.dataset.key);
+    trigger(el.dataset.key);
+  });
+  const lift = (event) => {
+    const key = pointers.get(event.pointerId);
+    if (!key) return;
+    pointers.delete(event.pointerId);
+    if (![...pointers.values()].includes(key) && !heldKeys.has(key)) engine.release(key);
+  };
+  keyboard.addEventListener("pointerup", lift);
+  keyboard.addEventListener("pointercancel", lift);
+  keyboard.addEventListener("lostpointercapture", lift);
+  keyboard.addEventListener("contextmenu", (event) => state.mode === "play" && event.preventDefault());
+
+  window.addEventListener("hashchange", () => {
+    const kit = readSharedKit();
+    if (kit) offerSharedKit(kit);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Visualiser
+// ---------------------------------------------------------------------------
+
+function startVisualiser() {
+  const canvas = $("#viz");
+  const ctx = canvas.getContext("2d");
+  const bars = 40;
+  const gap = 3;
+  let data = new Uint8Array(128);
+  let energy = 0;
+  const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)");
+
+  const frame = (time) => {
+    requestAnimationFrame(frame);
+    const { clientWidth: w, clientHeight: h } = canvas;
+    const dpr = Math.min(devicePixelRatio || 1, 2);
+    if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(h * dpr);
+    }
+    const analyser = getAnalyser();
+    if (analyser) {
+      if (data.length !== analyser.frequencyBinCount) data = new Uint8Array(analyser.frequencyBinCount);
+      analyser.getByteFrequencyData(data);
+    }
+    // YouTube audio can't be analysed (cross-origin), so animate from activity instead.
+    const target = engine.active.size || background.playing ? 1 : 0;
+    energy += (target - energy) * 0.08;
+
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    const pad = state.pads[state.lastKey];
+    const colour = pad && engine.isActive(pad.key) ? COLOURS[pad.colour] : "#ff4d6d";
+    const barWidth = (w - gap * (bars - 1)) / bars;
+    if (barWidth <= 1 || h <= 0) return;
+    const t = reduceMotion.matches ? 0 : time;
+    for (let i = 0; i < bars; i++) {
+      const centre = Math.abs(i - (bars - 1) / 2) / (bars / 2);
+      const bin = data[Math.floor((1 - centre) * data.length * 0.6)] / 255;
+      const synthetic = energy * (0.28 + 0.22 * Math.sin(t / 170 + i * 0.7)) * (1 - centre * 0.6);
+      const idle = 0.035 + 0.02 * Math.sin(t / 900 + i * 0.4);
+      const level = Math.max(bin, synthetic, idle);
+      const barHeight = Math.max(2, level * h * 0.55);
+      ctx.globalAlpha = 0.18 + level * 0.5;
+      ctx.fillStyle = colour;
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(i * (barWidth + gap), h - barHeight, barWidth, barHeight, Math.min(4, barWidth / 2));
+      else ctx.rect(i * (barWidth + gap), h - barHeight, barWidth, barHeight);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  };
+  requestAnimationFrame(frame);
+}
+
+// ---------------------------------------------------------------------------
+// Boot
+// ---------------------------------------------------------------------------
+
+async function init() {
+  renderShell();
+  const migrated = await migrateLegacy().catch(() => null);
+  Object.assign(state, migrated ?? loadState());
+
+  engine = new Engine({
+    layer: $("#layers"),
+    resolveFile: fileUrl,
+    onChange: updateLiveKeys,
+    onProgress: renderProgress,
+    onError(key, code) {
+      const message = ERROR_MESSAGES[code] ?? "Couldn't load that sound. Check the link still works.";
+      if (state.errors[key] === message) return;
+      state.errors[key] = message;
+      renderKeyboard();
+      if (state.selected === key) {
+        const hint = $("#source-hint");
+        if (hint) hint.innerHTML = sourceHint(state.pads[key]);
+      }
+      toast(`${key}: ${message}`, { tone: "warn" });
+    },
+  });
+  background = new Background({
+    layer: $("#layers"),
+    resolveFile: fileUrl,
+    onChange: renderTransport,
+    onError(code) {
+      if (code === "blocked") return toast("Tap the play button to start the background track.", { tone: "warn" });
+      toast(`Background: ${ERROR_MESSAGES[code] ?? "couldn't load that track."}`, { tone: "warn" });
+    },
+  });
+
+  engine.sync(state.pads);
+  background.set(state.background);
+  renderAll();
+  bindEvents();
+  startVisualiser();
+
+  const shared = readSharedKit();
+  if (shared) offerSharedKit(shared);
+  else if (!state.seenHelp) openHelp();
+  cleanOrphanFiles();
+}
+
 init();

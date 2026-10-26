@@ -1,17 +1,21 @@
 {
   "name": "meme-machine",
   "private": false,
-  "version": "0.0.0",
+  "version": "2.0.0",
   "type": "module",
   "homepage": "https://diogoneves.github.io/meme-machine/",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "deploy": "vite build && gh-pages -d dist"
+    "test": "vitest run",
+    "test:e2e": "node tests/e2e.cjs",
+    "deploy": "vite build && gh-pages -d dist --dotfiles --add"
   },
   "devDependencies": {
     "gh-pages": "^6.3.0",
-    "vite": "^6.3.5"
-  }
+    "vite": "^6.3.5",
+    "vitest": "^3.2.7"
+  },
+  "description": "A YouTube sampler for your keyboard and phone."
 }
