@@ -1,100 +1,77 @@
-# 🎛️ MEME MACHINE
+# 🎛️ Meme Machine
 
-**A web-based sample machine for mapping YouTube video clips to keyboard triggers**
+**A YouTube sampler for your keyboard and phone.** Drop clips onto keys, trim them to the perfect moment, then play them like an instrument.
 
-Transform any YouTube video into a playable instrument! Map video clips to keys, add background music, and create epic meme mashups with real-time visual feedback and audio visualization.
-
----
-
-## 🚀 Quick Start
-
-![CleanShot 2025-06-05 at 20 54 42](https://github.com/user-attachments/assets/2373d61d-08a0-46f1-b05f-99a2ace98761)
-
-### 1. **Set Up Your Clips** (Edit Mode)
-1. Click any key button to assign it
-2. Press a letter key (A-Z) to map it
-3. Paste a YouTube URL
-4. Use the video preview to find your moment
-5. Click "Set Current Time" to capture the timestamp
-6. Repeat for more clips
-
-### 2. **Add Background Music** (Optional)
-1. Click "Upload" next to the background track field
-2. Select an audio file (MP3, WAV, etc.)
-3. Your music will loop in the background during performance
-
-![CleanShot 2025-06-05 at 20 54 59](https://github.com/user-attachments/assets/d9a81688-7461-4bd4-8506-375090742386)
-
-### 3. **Perform** (Play Mode)
-1. Click "Play" to enter performance mode
-2. Press mapped keys to trigger video clips
-3. Use **SPACEBAR** to start/stop background music
-4. Watch the real-time audio visualization
-5. Hold keys to keep videos playing
+👉 **[diogoneves.github.io/meme-machine](https://diogoneves.github.io/meme-machine/)**
 
 ---
 
-## 🎮 Controls
+## Quick start
 
-### Edit Mode
-| Action | Method |
-|--------|--------|
-| Map key to clip | Click key button → Press letter |
-| Add YouTube URL | Paste URL in text field |
-| Set timestamp | Play preview → Click "Set Current Time" |
-| Remove clip | Click red ✕ button |
-| Toggle preview | Click ▲/▼ button |
-| Upload audio | Click "Upload" button |
+1. **Pick a key.** In **Edit**, click, tap or press any letter.
+2. **Give it a sound.** You can:
+   - paste a YouTube link (`watch`, `youtu.be`, `shorts`, `live` and `?t=` links all work)
+   - upload an audio file
+   - grab a free sound from the built-in **library**
+3. **Find the moment.** Scrub the preview and hit **Set** for the start (and the end, if you want one).
+4. **Perform.** Switch to **Play**, then hold keys or pads to play clips.
 
-### Play Mode
-| Control | Action |
-|---------|--------|
-| **A-Z Keys** | Trigger mapped video clips |
-| **SPACEBAR** | Start/stop background music |
-| **Hold Key** | Keep video playing |
-| **Release Key** | Stop video |
+Each pad can **Stop** when you let go, or **Keep playing** to the end. There's also an optional looping **background track** (YouTube, audio link, upload or library).
 
----
+### Controls
 
-## 🛠️ Technical Details
+| Play mode | |
+|---|---|
+| <kbd>A</kbd>–<kbd>Z</kbd> / tap a pad | Play the clip (hold to keep playing) |
+| <kbd>Space</kbd> | Background track on/off |
+| <kbd>Esc</kbd> | Stop everything |
 
-### Browser Requirements
-- Modern web browser (Chrome, Firefox, Safari, Edge)
-- JavaScript enabled
-- LocalStorage support
-- Audio/video permissions
+| Edit mode | |
+|---|---|
+| <kbd>A</kbd>–<kbd>Z</kbd> | Select that key |
+| <kbd>Esc</kbd> | Close the editor / cancel a move |
 
-### File Support
-- **Video**: YouTube URLs only
-- **Audio**: MP3, WAV, OGG, M4A (up to 50MB)
-- **Storage**: Automatic browser storage (5MB+ recommended)
+On phones, Play mode switches to big pads that work with several fingers at once.
 
----
+## Free sound library
 
-## 🤝 Contributing
+The **Sounds** button searches [Wikimedia Commons](https://commons.wikimedia.org/), where every file is freely licensed (public domain, CC0, CC BY or CC BY-SA). Each pad remembers its author and licence, and the **Help** panel lists the credits for your kit. If you publish anything you make, credit those sounds.
 
-Want to make the meme machine even more awesome? Contributions welcome!
+The library also links to other free sources:
 
-1. Fork the repository
-2. Create your feature branch
-3. Commit your changes
-4. Push to the branch
-5. Open a Pull Request
+- [YouTube, filtered to Creative Commons](https://www.youtube.com/results?search_query=sound+effect&sp=EgIwAQ%253D%253D)
+- [Freesound CC0](https://freesound.org/search/?q=&f=license:%22Creative+Commons+0%22)
+- [Pixabay sound effects](https://pixabay.com/sound-effects/)
+- [Incompetech music (CC BY)](https://incompetech.com/music/royalty-free/music.html)
 
----
+## Sharing
 
-## 📜 License
+**Share** creates a link that rebuilds your kit (pads, times, colours, background) in anyone's browser. Uploaded files stay on your device, so they aren't included.
 
-MIT License - feel free to use, modify, and distribute!
+Kits save automatically in your browser. Uploaded audio is kept in IndexedDB.
 
----
+## Development
 
-## 🔗 Links
+```bash
+npm install
+npm run dev        # local dev server
+npm test           # unit tests (Vitest)
+npm run build
+npm run test:e2e   # browser smoke test (needs Playwright + Chromium); SHOTS_DIR=… saves screenshots
+npm run deploy     # build and publish to the gh-pages branch
+```
 
-- **GitHub**: [github.com/DiogoNeves/meme-machine](https://github.com/DiogoNeves/meme-machine)
-- **YouTube**: [@DiogoNeves](https://www.youtube.com/@DiogoNeves)
-- **Creator**: Diogo Neves
+The app is plain JavaScript with Vite and has no runtime dependencies:
 
----
+| File | Purpose |
+|---|---|
+| `src/main.js` | UI, input handling, dialogs |
+| `src/engine.js` | Pad voices (YouTube players and Web Audio buffers) and the background track |
+| `src/audio.js` | Shared `AudioContext`, buffer playback, visualiser feed |
+| `src/library.js` | Wikimedia Commons search |
+| `src/pads.js`, `src/time.js`, `src/youtube.js` | Data model, timestamp parsing, YouTube link parsing |
+| `src/share.js`, `src/storage.js` | Share links, localStorage, IndexedDB and migration from v1 |
 
-**Built with ❤️ for the meme community**
+## Licence
+
+MIT. Made by [Diogo Neves](https://www.youtube.com/@DiogoNeves).
